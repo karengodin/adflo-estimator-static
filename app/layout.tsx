@@ -70,7 +70,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 href="/adfloxtract"
                 label="AdfloXtract"
                 collapsed={collapsed}
-                icon="🧩"
+                icon="🔀"
+              />
+              <NavItem
+                href="/migration"
+                label="Migration Tool"
+                collapsed={collapsed}
+                icon="🔄"
               />
               <NavItem href="/admin" label="Admin" collapsed={collapsed} icon="⚙️" />
             </nav>
