@@ -109,13 +109,21 @@ export default function SessionDetailPage() {
     return groups;
   }, [questions, session]);
 
-  const flagged = useMemo(() => {
-    const answers = session?.answers || {};
-    return questions.filter((q) => {
-      const answer = answers[String(q.id)];
-      return answer === q.trigger && (q.blocker || q.sow);
-    });
-  }, [questions, session]);
+const blockers = useMemo(() => {
+  const answers = session?.answers || {};
+  return questions.filter((q) => {
+    const answer = answers[String(q.id)];
+    return answer === q.trigger && q.blocker;
+  });
+}, [questions, session]);
+
+const sowItems = useMemo(() => {
+  const answers = session?.answers || {};
+  return questions.filter((q) => {
+    const answer = answers[String(q.id)];
+    return answer === q.trigger && q.sow;
+  });
+}, [questions, session]);
 
   if (loading) {
     return <div style={{ padding: 32 }}>Loading session...</div>;
@@ -171,10 +179,9 @@ export default function SessionDetailPage() {
             <SummaryRow label="Estimated Hours" value={`${session.estimated_hours} hrs`} />
             <SummaryRow label="Tier" value={session.tier} />
             <SummaryRow label="Timeline" value={session.timeline || "—"} />
-            <SummaryRow
-              label="Submitted"
-              value={new Date(session.submitted_at).toLocaleString()}
-            />
+            <SummaryRow label="Blockers" value={String(blockers.length)} />
+			<SummaryRow label="SOW Items" value={String(sowItems.length)} />
+            <SummaryRow label="Submitted" value={new Date(session.submitted_at).toLocaleString()} />
           </div>
         </div>
       </div>
@@ -196,39 +203,84 @@ export default function SessionDetailPage() {
   </Link>
 </div>
 
-      {flagged.length > 0 && (
+      {(blockers.length > 0 || sowItems.length > 0) && (
+  <div
+    style={{
+      marginBottom: 24,
+      background: "#fff8e8",
+      border: "1px solid #f3e0a3",
+      borderRadius: 16,
+      padding: 16,
+    }}
+  >
+    <div
+      style={{
+        fontSize: 12,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.08em",
+        color: "#8a6417",
+        marginBottom: 10,
+      }}
+    >
+      Scope Flags
+    </div>
+
+    <div style={{ fontSize: 14, color: "#8a6417", marginBottom: 12 }}>
+      {blockers.length} blocker{blockers.length !== 1 ? "s" : ""} · {sowItems.length} SOW item{sowItems.length !== 1 ? "s" : ""}
+    </div>
+
+    {blockers.length > 0 && (
+      <div style={{ marginBottom: 12 }}>
         <div
           style={{
-            marginBottom: 24,
-            background: "#fff8e8",
-            border: "1px solid #f3e0a3",
-            borderRadius: 16,
-            padding: 16,
+            fontSize: 12,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            color: "#8a6417",
+            marginBottom: 8,
           }}
         >
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              color: "#8a6417",
-              marginBottom: 10,
-            }}
-          >
-            Blockers / SOW Items
-          </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            {flagged.map((item) => (
-              <div key={item.id} style={{ fontSize: 14, color: "#8a6417" }}>
-                {item.blocker ? "Blocker" : "SOW"}: {item.question}
-              </div>
-            ))}
-          </div>
+          Blockers
         </div>
-      )}
 
+        <div style={{ display: "grid", gap: 8 }}>
+          {blockers.map((item) => (
+            <div key={item.id} style={{ fontSize: 14, color: "#8a6417" }}>
+              {item.question}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {sowItems.length > 0 && (
+      <div>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            color: "#8a6417",
+            marginBottom: 8,
+          }}
+        >
+          SOW Items
+        </div>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          {sowItems.map((item) => (
+            <div key={item.id} style={{ fontSize: 14, color: "#8a6417" }}>
+              {item.question}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+  </div>
+)}
       <div style={{ display: "grid", gap: 24 }}>
         {Object.entries(grouped).map(([category, items]) => (
           <div
