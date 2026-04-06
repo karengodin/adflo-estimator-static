@@ -1,303 +1,582 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "../../lib/supabase";
 
-type MigrateStatus = "pending" | "success" | "partial_success" | "error";
+// ─── Types ─────────────────────────────────────────────────────────────────
 
-interface RowResult {
+type Instance = {
   id: string;
-  status: MigrateStatus;
-  httpCode: number;
-  snippet: string;
-  ranAt: string;
-}
-
-interface TapClicksInstance {
-  id: string;
-  label: string;
-  url: string;
-}
-
-interface SessionState {
-  instanceId: string;
-  instanceUrl: string;
-  cookie: string;
-  loggedInAt: number;
-}
-
-interface MigrationSection {
-  key: string;
-  label: string;
-  migrationType: "lookuptype" | "entityform";
-  entityType?: string;
-  placeholder: string;
-}
-
-const SECTIONS: MigrationSection[] = [
-  { key: "lookup",  label: "Lookup Types",  migrationType: "lookuptype",  placeholder: "Paste IDs, one per line\n12345\n67890\n..." },
-  { key: "client",  label: "Client Forms",  migrationType: "entityform",  entityType: "client",    placeholder: "Paste form IDs, one per line" },
-  { key: "order",   label: "Order Forms",   migrationType: "entityform",  entityType: "order",     placeholder: "Paste form IDs, one per line" },
-  { key: "product", label: "Product Forms", migrationType: "entityform",  entityType: "line_item", placeholder: "Paste form IDs, one per line" },
-  { key: "flight",  label: "Flight Forms",  migrationType: "entityform",  entityType: "flight",    placeholder: "Paste form IDs, one per line" },
-  { key: "task",    label: "Task Forms",    migrationType: "entityform",  entityType: "task",      placeholder: "Paste form IDs, one per line" },
-];
-
-const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
-
-const STATUS_META: Record<MigrateStatus, { label: string; color: string; bg: string; border: string }> = {
-  success:         { label: "Success", color: "#1a7f4b", bg: "#edfaf3", border: "#b6ecd0" },
-  partial_success: { label: "Partial",  color: "#a8611a", bg: "#fdf1e5", border: "#f1d3b2" },
-  error:           { label: "Error",    color: "#c0392b", bg: "#fdf2f2", border: "#f5c6c6" },
-  pending:         { label: "Pending",  color: "#627286", bg: "#f5f7fb", border: "#d8e1ec" },
+  name: string;
+  base_url: string;
+  session_cookie: string; // encrypted at rest, placeholder shown in UI
+  is_active: boolean;
+  cookie_expires_at: string | null;
+  last_connected_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
-function StatusBadge({ status }: { status: MigrateStatus }) {
-  const m = STATUS_META[status] ?? STATUS_META.pending;
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" as const, background: m.bg, color: m.color, border: `1px solid ${m.border}` }}>
-      {m.label}
-    </span>
-  );
+type ConnectionStatus = "idle" | "testing" | "ok" | "fail";
+
+type ModalMode = "add" | "edit";
+
+type FormState = {
+  name: string;
+  base_url: string;
+  session_cookie: string;
+  is_active: boolean;
+};
+
+const EMPTY_FORM: FormState = {
+  name: "",
+  base_url: "",
+  session_cookie: "",
+  is_active: true,
+};
+
+// ─── Lovable proxy helper ──────────────────────────────────────────────────
+
+async function callLovable(fn: string, payload: Record<string, unknown>) {
+  const res = await fetch("/api/lovable", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fn, ...payload }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || "Request failed");
+  return data;
 }
 
-function ProgressBar({ done, total }: { done: number; total: number }) {
-  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#627286", marginBottom: 6 }}>
-        <span style={{ fontWeight: 600 }}>Running…</span>
-        <span>{done} / {total} — {pct}%</span>
-      </div>
-      <div style={{ height: 6, background: "#d8e1ec", borderRadius: 999, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: "#2f6fed", borderRadius: 999, transition: "width 0.3s ease" }} />
-      </div>
-    </div>
-  );
-}
-
-function ResultsTable({ results }: { results: RowResult[] }) {
-  if (results.length === 0) return null;
-  const counts = results.reduce((acc, r) => { acc[r.status] = (acc[r.status] ?? 0) + 1; return acc; }, {} as Record<string, number>);
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginBottom: 14 }}>
-        {Object.entries(counts).map(([status, count]) => {
-          const m = STATUS_META[status as MigrateStatus] ?? STATUS_META.pending;
-          return <span key={status} style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: m.bg, color: m.color, border: `1px solid ${m.border}` }}>{count} {status.replace("_", " ")}</span>;
-        })}
-      </div>
-      <div style={{ overflowX: "auto" as const, border: "1px solid #d8e1ec", borderRadius: 12 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: "#f5f7fb", borderBottom: "1px solid #d8e1ec" }}>
-              {["ID", "Status", "HTTP", "Snippet", "Ran At"].map((h) => (
-                <th key={h} style={{ textAlign: "left" as const, padding: "8px 14px", color: "#627286", fontWeight: 700, fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase" as const, whiteSpace: "nowrap" as const }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((r, i) => (
-              <tr key={i} style={{ borderBottom: i < results.length - 1 ? "1px solid #eef3f8" : "none", background: "#ffffff" }}>
-                <td style={{ padding: "8px 14px", color: "#18212b", fontWeight: 600, whiteSpace: "nowrap" as const, fontFamily: "monospace" }}>{r.id}</td>
-                <td style={{ padding: "8px 14px", whiteSpace: "nowrap" as const }}><StatusBadge status={r.status} /></td>
-                <td style={{ padding: "8px 14px", color: r.httpCode >= 400 || r.httpCode === 0 ? "#c0392b" : "#627286", whiteSpace: "nowrap" as const, fontFamily: "monospace" }}>{r.httpCode || "—"}</td>
-                <td style={{ padding: "8px 14px", color: "#627286", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontSize: 12 }} title={r.snippet}>{r.snippet}</td>
-                <td style={{ padding: "8px 14px", color: "#8fa3b8", whiteSpace: "nowrap" as const, fontSize: 12 }}>{new Date(r.ranAt).toLocaleTimeString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function MigrationPanel({ section, session, onSessionExpired }: { section: MigrationSection; session: SessionState | null; onSessionExpired: () => void }) {
-  const [input, setInput] = useState("");
-  const [pendingOnly, setPendingOnly] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<RowResult[]>([]);
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef(false);
-
-  const ids = input.split("\n").map((s) => s.trim()).filter(Boolean);
-  const successStatuses = new Set(["success", "ok", "done"]);
-  const doneIds = new Set(results.filter((r) => successStatuses.has(r.status)).map((r) => r.id));
-  const idsToRun = pendingOnly ? ids.filter((id) => !doneIds.has(id)) : ids;
-  const disabled = !session;
-
-  async function run() {
-    if (!session) { setError("No active session. Select and connect to an instance first."); return; }
-    if (idsToRun.length === 0) return;
-    setRunning(true);
-    setError(null);
-    abortRef.current = false;
-    setProgress({ done: 0, total: idsToRun.length });
-    const resultMap = new Map(results.map((r) => [r.id, r]));
-
-    for (let i = 0; i < idsToRun.length; i++) {
-      if (abortRef.current) break;
-      const id = idsToRun[i];
-      try {
-        const res = await fetch("/api/migrate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids: [id], migrationType: section.migrationType, entityType: section.entityType, cookie: session.cookie, instanceUrl: session.instanceUrl }),
-        });
-        const data = await res.json();
-        if (res.status === 401) { onSessionExpired(); setError("Session expired. Re-authenticate and retry."); abortRef.current = true; break; }
-        const row: RowResult = data.results?.[0] ?? { id, status: "error" as MigrateStatus, httpCode: 0, snippet: "No result", ranAt: new Date().toISOString() };
-        if (row.httpCode === 401) { onSessionExpired(); setError("Session expired. Re-authenticate and retry."); abortRef.current = true; break; }
-        resultMap.set(id, row);
-      } catch (err) {
-        resultMap.set(id, { id, status: "error" as MigrateStatus, httpCode: 0, snippet: String(err), ranAt: new Date().toISOString() });
-      }
-      setProgress({ done: i + 1, total: idsToRun.length });
-      setResults(ids.map((id) => resultMap.get(id)).filter(Boolean) as RowResult[]);
-    }
-    setRunning(false);
-  }
-
-  function exportCsv() {
-    const rows = results.map((r) => [r.id, r.status, r.httpCode, `"${r.snippet.replace(/"/g, '""')}"`, r.ranAt].join(","));
-    const blob = new Blob([["id,status,http_code,snippet,ran_at", ...rows].join("\n")], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `${section.key}-migration-${Date.now()}.csv`; a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  return (
-    <div style={{ background: "#ffffff", border: "1px solid #d8e1ec", borderRadius: 18, padding: 28, marginBottom: 20, boxShadow: "0 1px 2px rgba(16,24,40,0.04), 0 6px 18px rgba(16,24,40,0.04)", opacity: disabled ? 0.5 : 1, transition: "opacity 0.2s" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#18212b", letterSpacing: "-0.01em" }}>{section.label}</h2>
-          {section.entityType && <span style={{ fontSize: 11, color: "#2f6fed", background: "rgba(47,111,237,0.08)", padding: "2px 8px", borderRadius: 6, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" as const, border: "1px solid rgba(47,111,237,0.15)" }}>{section.entityType}</span>}
-        </div>
-        <span style={{ fontSize: 12, color: "#8fa3b8" }}>{ids.length} ID{ids.length !== 1 ? "s" : ""}</span>
-      </div>
-
-      <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={disabled ? "Connect to an instance above first…" : section.placeholder} disabled={running || disabled} rows={4}
-        style={{ width: "100%", boxSizing: "border-box" as const, background: "#f5f7fb", border: "1px solid #d8e1ec", borderRadius: 10, color: "#18212b", fontFamily: "monospace", fontSize: 13, padding: "10px 14px", resize: "vertical" as const, outline: "none", marginBottom: 14, lineHeight: 1.7 }}
-        onFocus={(e) => { if (!disabled) e.target.style.borderColor = "#2f6fed"; }} onBlur={(e) => (e.target.style.borderColor = "#d8e1ec")} />
-
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#455468", cursor: "pointer", userSelect: "none" as const }}>
-          <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)} disabled={running || disabled} style={{ accentColor: "#2f6fed" }} />
-          Skip already-succeeded IDs
-        </label>
-        <div style={{ flex: 1 }} />
-        {results.length > 0 && <button onClick={exportCsv} className="simple-button secondary" style={{ fontSize: 13, padding: "8px 16px", borderRadius: 10 }}>Export CSV</button>}
-        {running
-          ? <button onClick={() => { abortRef.current = true; }} style={{ padding: "8px 18px", background: "#fff5f5", border: "1px solid #f5c6c6", borderRadius: 10, color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Stop</button>
-          : <button onClick={run} disabled={idsToRun.length === 0 || disabled} className="simple-button" style={{ fontSize: 13, padding: "8px 20px", borderRadius: 10, opacity: idsToRun.length === 0 || disabled ? 0.45 : 1, cursor: idsToRun.length === 0 || disabled ? "not-allowed" : "pointer" }}>Run Migration →</button>
-        }
-      </div>
-
-      {error && <div style={{ marginTop: 12, padding: "10px 14px", background: "#fdf2f2", border: "1px solid #f5c6c6", borderRadius: 8, color: "#c0392b", fontSize: 13 }}>{error}</div>}
-      {running && progress.total > 0 && <div style={{ marginTop: 16 }}><ProgressBar done={progress.done} total={progress.total} /></div>}
-      <ResultsTable results={results} />
-    </div>
-  );
-}
-
-function InstanceBar({ session, onConnect, onDisconnect }: { session: SessionState | null; onConnect: (id: string) => Promise<void>; onDisconnect: () => void }) {
-  const [instances, setInstances] = useState<TapClicksInstance[]>([]);
-  const [selected, setSelected] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/instances").then((r) => r.json()).then((data) => {
-      if (data.instances) { setInstances(data.instances); setSelected(data.instances[0]?.id ?? ""); }
-      else setError(data.error ?? "Failed to load instances.");
-    }).catch(() => setError("Could not fetch instance list."));
-  }, []);
-
-  async function connect() {
-    if (!selected) return;
-    setLoading(true); setError(null);
-    await onConnect(selected);
-    setLoading(false);
-  }
-
-  const sessionAge = session ? Math.round((Date.now() - session.loggedInAt) / 60000) : 0;
-  const sessionWarning = session && Date.now() - session.loggedInAt > SESSION_TTL_MS * 0.75;
-
-  return (
-    <div style={{ background: "#ffffff", border: "1px solid #d8e1ec", borderRadius: 18, padding: "20px 28px", marginBottom: 28, boxShadow: "0 1px 2px rgba(16,24,40,0.04), 0 6px 18px rgba(16,24,40,0.04)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 14 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#18212b", marginBottom: 2 }}>TapClicks Instance</div>
-          <div style={{ fontSize: 12, color: "#627286" }}>Select an instance to authenticate and begin migration.</div>
-        </div>
-
-        {session ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: sessionWarning ? "#f59e0b" : "#22c55e", display: "inline-block" }} />
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#18212b" }}>{instances.find((i) => i.id === session.instanceId)?.label ?? session.instanceId}</span>
-              <span style={{ fontSize: 12, color: "#8fa3b8" }}>· {sessionWarning ? "⚠ session aging" : `active ${sessionAge}m ago`}</span>
-            </div>
-            <button onClick={onDisconnect} className="simple-button secondary" style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8 }}>Switch Instance</button>
-          </div>
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const }}>
-            <select value={selected} onChange={(e) => setSelected(e.target.value)} disabled={loading || instances.length === 0}
-              style={{ padding: "8px 12px", border: "1px solid #d8e1ec", borderRadius: 10, fontSize: 13, color: "#18212b", background: "#f5f7fb", outline: "none", minWidth: 220 }}>
-              {instances.length === 0 && <option value="">Loading…</option>}
-              {instances.map((inst) => <option key={inst.id} value={inst.id}>{inst.label} — {inst.url}</option>)}
-            </select>
-            <button onClick={connect} disabled={loading || !selected} className="simple-button" style={{ fontSize: 13, padding: "8px 20px", borderRadius: 10, opacity: loading || !selected ? 0.65 : 1, cursor: loading || !selected ? "not-allowed" : "pointer" }}>
-              {loading ? "Connecting…" : "Connect →"}
-            </button>
-          </div>
-        )}
-      </div>
-      {error && <div style={{ marginTop: 12, padding: "10px 14px", background: "#fdf2f2", border: "1px solid #f5c6c6", borderRadius: 8, color: "#c0392b", fontSize: 13 }}>{error}</div>}
-    </div>
-  );
-}
+// ─── Page ──────────────────────────────────────────────────────────────────
 
 export default function MigrationPage() {
-  const [session, setSession] = useState<SessionState | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [instances, setInstances] = useState<Instance[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState<Record<string, ConnectionStatus>>({});
 
-  const connect = useCallback(async (instanceId: string) => {
-    setAuthError(null);
-    const res = await fetch("/api/auth/tapclicks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instanceId }) });
-    const data = await res.json();
-    if (!res.ok || data.error) { setAuthError(data.error ?? "Authentication failed."); return; }
-    setSession({ instanceId, instanceUrl: data.instanceUrl, cookie: data.cookie, loggedInAt: Date.now() });
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState<ModalMode>("add");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Delete confirm
+  const [deleteTarget, setDeleteTarget] = useState<Instance | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // ── Fetch instances from AdFlo's own Supabase ──────────────────────────
+
+  const fetchInstances = async () => {
+    const { data, error } = await supabase
+      .from("instances")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (error) console.error("Error fetching instances:", error);
+    else setInstances((data as Instance[]) || []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchInstances();
   }, []);
 
-  const disconnect = useCallback(() => setSession(null), []);
+  // ── Modal helpers ──────────────────────────────────────────────────────
+
+  const openAdd = () => {
+    setForm(EMPTY_FORM);
+    setFormError(null);
+    setEditingId(null);
+    setModalMode("add");
+    setModalOpen(true);
+  };
+
+  const openEdit = (instance: Instance) => {
+    setForm({
+      name: instance.name,
+      base_url: instance.base_url,
+      session_cookie: "", // never pre-fill the cookie
+      is_active: instance.is_active,
+    });
+    setFormError(null);
+    setEditingId(instance.id);
+    setModalMode("edit");
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditingId(null);
+    setFormError(null);
+  };
+
+  // ── Save (create or update via Lovable proxy) ──────────────────────────
+
+  const handleSave = async () => {
+    setFormError(null);
+
+    if (!form.name.trim()) return setFormError("Name is required.");
+    if (!form.base_url.trim()) return setFormError("Base URL is required.");
+    try { new URL(form.base_url); } catch { return setFormError("Enter a valid URL (include https://)."); }
+    if (modalMode === "add" && !form.session_cookie.trim()) return setFormError("Session cookie is required.");
+
+    try {
+      setSaving(true);
+
+      if (modalMode === "add") {
+        await callLovable("manage-instance", {
+          action: "create",
+          name: form.name.trim(),
+          base_url: form.base_url.trim(),
+          session_cookie: form.session_cookie.trim(),
+          is_active: form.is_active,
+        });
+      } else if (editingId) {
+        const payload: Record<string, unknown> = {
+          action: "update",
+          id: editingId,
+          name: form.name.trim(),
+          base_url: form.base_url.trim(),
+          is_active: form.is_active,
+        };
+        // Only send cookie if user typed a new one
+        if (form.session_cookie.trim()) {
+          payload.session_cookie = form.session_cookie.trim();
+        }
+        await callLovable("manage-instance", payload);
+      }
+
+      await fetchInstances();
+      closeModal();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Delete ─────────────────────────────────────────────────────────────
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      setDeleting(true);
+      await callLovable("manage-instance", {
+        action: "delete",
+        id: deleteTarget.id,
+      });
+      await fetchInstances();
+      setDeleteTarget(null);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // ── Test connection ────────────────────────────────────────────────────
+
+  const handleTest = async (instance: Instance) => {
+    setConnectionStatus((prev) => ({ ...prev, [instance.id]: "testing" }));
+    try {
+      await callLovable("test-connection", { instance_id: instance.id });
+      setConnectionStatus((prev) => ({ ...prev, [instance.id]: "ok" }));
+    } catch {
+      setConnectionStatus((prev) => ({ ...prev, [instance.id]: "fail" }));
+    }
+  };
+
+  // ── Cookie expiry helpers ──────────────────────────────────────────────
+
+  const getCookieStatus = (instance: Instance) => {
+    if (!instance.cookie_expires_at) return null;
+    const expires = new Date(instance.cookie_expires_at);
+    const now = new Date();
+    const diffMs = expires.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return { label: "Expired", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" };
+    if (diffDays <= 3) return { label: `Expires in ${diffDays}d`, color: "#b45309", bg: "#fffbeb", border: "#fde68a" };
+    return { label: `Expires ${expires.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, color: "#1f9d55", bg: "#edf8f2", border: "#cfe7d7" };
+  };
+
+  const formatDate = (val: string | null) =>
+    val ? new Date(val).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
+
+  // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="estimator-shell">
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "48px 24px 80px" }}>
-        <div style={{ marginBottom: 36 }}>
-          <h1 style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "#18212b" }}>
-            Migration <span style={{ color: "#2f6fed" }}>Console</span>
+    <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+
+      {/* Page header */}
+      <div style={{ marginBottom: 28, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em", color: "#0f1623" }}>
+            adfloMigrate
           </h1>
-          <p style={{ margin: 0, fontSize: 15, color: "#627286", lineHeight: 1.6, maxWidth: 560 }}>
-            Select an instance, authenticate, then paste IDs to run migrations. Credentials are stored server-side only.
+          <p style={{ marginTop: 6, color: "#627286", fontSize: 14, margin: "6px 0 0" }}>
+            Manage TapClicks instances and run migrations between environments.
           </p>
         </div>
+        <button type="button" onClick={openAdd} style={primaryButtonStyle}>
+          + Add Instance
+        </button>
+      </div>
 
-        <InstanceBar session={session} onConnect={connect} onDisconnect={disconnect} />
+      {/* Stats row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14, marginBottom: 24 }}>
+        <MiniStat value={String(instances.length)} label="Total Instances" accent="#2f6fed" />
+        <MiniStat value={String(instances.filter(i => i.is_active).length)} label="Active" accent="#4fbf9f" />
+        <MiniStat
+          value={String(instances.filter(i => i.cookie_expires_at && new Date(i.cookie_expires_at) < new Date()).length)}
+          label="Expired Cookies"
+          accent="#e8974a"
+        />
+      </div>
 
-        {authError && (
-          <div style={{ marginBottom: 20, padding: "12px 16px", background: "#fdf2f2", border: "1px solid #f5c6c6", borderRadius: 10, color: "#c0392b", fontSize: 13 }}>
-            <strong>Authentication failed:</strong> {authError}
+      {/* Instances list */}
+      <div style={{ background: "#ffffff", border: "1px solid #dde5ef", borderRadius: 18, overflow: "hidden", boxShadow: "0 1px 4px rgba(16,24,40,0.05)" }}>
+        <div style={{ padding: "16px 22px", borderBottom: "1px solid #dde5ef", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#0f1623", letterSpacing: "-0.01em" }}>
+            Instances
+            {instances.length > 0 && (
+              <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, background: "#eaf1ff", color: "#2f6fed", padding: "2px 8px", borderRadius: 999, border: "1px solid #cddcff" }}>
+                {instances.length}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: "40px 24px", textAlign: "center", color: "#627286" }}>
+            <div style={spinnerStyle} />
+            <div style={{ marginTop: 12, fontSize: 14 }}>Loading instances…</div>
+          </div>
+        ) : instances.length === 0 ? (
+          <div style={{ padding: "52px 24px", textAlign: "center" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>🔌</div>
+            <div style={{ fontWeight: 700, color: "#0f1623", marginBottom: 6 }}>No instances yet</div>
+            <div style={{ color: "#8a9bb0", fontSize: 14, marginBottom: 20 }}>
+              Add a TapClicks instance to get started.
+            </div>
+            <button type="button" onClick={openAdd} style={primaryButtonStyle}>
+              + Add Instance
+            </button>
+          </div>
+        ) : (
+          <div>
+            {instances.map((instance, i) => {
+              const cookieStatus = getCookieStatus(instance);
+              const connStatus = connectionStatus[instance.id] || "idle";
+              const isLast = i === instances.length - 1;
+
+              return (
+                <div
+                  key={instance.id}
+                  style={{
+                    padding: "18px 22px",
+                    borderBottom: isLast ? "none" : "1px solid #edf2f7",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 16,
+                    flexWrap: "wrap",
+                    transition: "background 0.12s",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  {/* Status dot */}
+                  <div
+                    style={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: "50%",
+                      background: instance.is_active ? "#4fbf9f" : "#d0daea",
+                      flexShrink: 0,
+                      boxShadow: instance.is_active ? "0 0 0 3px rgba(79,191,159,0.2)" : "none",
+                    }}
+                  />
+
+                  {/* Name + URL */}
+                  <div style={{ flex: 1, minWidth: 180 }}>
+                    <div style={{ fontWeight: 700, color: "#0f1623", fontSize: 14 }}>
+                      {instance.name}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#8a9bb0", marginTop: 2, fontFamily: "'DM Mono', monospace" }}>
+                      {instance.base_url}
+                    </div>
+                  </div>
+
+                  {/* Cookie expiry badge */}
+                  {cookieStatus && (
+                    <span style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: "3px 9px",
+                      borderRadius: 999,
+                      background: cookieStatus.bg,
+                      color: cookieStatus.color,
+                      border: `1px solid ${cookieStatus.border}`,
+                      whiteSpace: "nowrap",
+                    }}>
+                      {cookieStatus.label}
+                    </span>
+                  )}
+
+                  {/* Last connected */}
+                  <div style={{ fontSize: 12, color: "#8a9bb0", whiteSpace: "nowrap" }}>
+                    Last connected: {formatDate(instance.last_connected_at)}
+                  </div>
+
+                  {/* Connection test result */}
+                  {connStatus !== "idle" && (
+                    <span style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: "3px 9px",
+                      borderRadius: 999,
+                      ...(connStatus === "testing"
+                        ? { background: "#eaf1ff", color: "#2f6fed", border: "1px solid #cddcff" }
+                        : connStatus === "ok"
+                        ? { background: "#edf8f2", color: "#1f9d55", border: "1px solid #cfe7d7" }
+                        : { background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }),
+                    }}>
+                      {connStatus === "testing" ? "Testing…" : connStatus === "ok" ? "✓ Connected" : "✗ Failed"}
+                    </span>
+                  )}
+
+                  {/* Actions */}
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => handleTest(instance)}
+                      disabled={connStatus === "testing"}
+                      style={outlineButtonSmallStyle}
+                    >
+                      Test
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openEdit(instance)}
+                      style={outlineButtonSmallStyle}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(instance)}
+                      style={{ ...outlineButtonSmallStyle, color: "#dc2626", borderColor: "#fecaca" }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
+      </div>
 
-        {SECTIONS.map((section) => (
-          <MigrationPanel key={section.key} section={section} session={session} onSessionExpired={disconnect} />
-        ))}
+      {/* ── Add / Edit Modal ──────────────────────────────────────────── */}
+      {modalOpen && (
+        <ModalOverlay onClose={closeModal}>
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#0f1623", letterSpacing: "-0.02em" }}>
+              {modalMode === "add" ? "Add Instance" : "Edit Instance"}
+            </div>
+            <div style={{ fontSize: 13, color: "#8a9bb0", marginTop: 4 }}>
+              {modalMode === "add"
+                ? "Connect a TapClicks environment using its session cookie."
+                : "Update instance details. Leave cookie blank to keep the existing one."}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: 12 }}>
+            <FormField label="Instance Name" hint="e.g. Production, Staging, Client ABC">
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="My TapClicks Instance"
+                style={inputStyle}
+              />
+            </FormField>
+
+            <FormField label="Base URL" hint="The root URL of the TapClicks instance">
+              <input
+                type="url"
+                value={form.base_url}
+                onChange={(e) => setForm((f) => ({ ...f, base_url: e.target.value }))}
+                placeholder="https://app.tapclicks.com"
+                style={inputStyle}
+              />
+            </FormField>
+
+            <FormField
+              label={modalMode === "edit" ? "Session Cookie (leave blank to keep existing)" : "Session Cookie"}
+              hint="Paste the full cookie string from your browser DevTools"
+            >
+              <textarea
+                value={form.session_cookie}
+                onChange={(e) => setForm((f) => ({ ...f, session_cookie: e.target.value }))}
+                placeholder="session=eyJ...; other_cookie=..."
+                rows={3}
+                style={{ ...inputStyle, resize: "vertical", fontFamily: "'DM Mono', monospace", fontSize: 12 }}
+              />
+            </FormField>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 14, color: "#455468" }}>
+              <input
+                type="checkbox"
+                checked={form.is_active}
+                onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
+                style={{ width: 16, height: 16, accentColor: "#2f6fed" }}
+              />
+              Mark as active
+            </label>
+          </div>
+
+          {formError && (
+            <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 10, background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", fontSize: 13 }}>
+              {formError}
+            </div>
+          )}
+
+          <div style={{ marginTop: 20, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button type="button" onClick={closeModal} style={outlineButtonStyle}>
+              Cancel
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving} style={primaryButtonStyle}>
+              {saving ? "Saving…" : modalMode === "add" ? "Add Instance" : "Save Changes"}
+            </button>
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* ── Delete Confirm Modal ──────────────────────────────────────── */}
+      {deleteTarget && (
+        <ModalOverlay onClose={() => setDeleteTarget(null)}>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#0f1623" }}>Delete Instance</div>
+            <div style={{ fontSize: 14, color: "#627286", marginTop: 8, lineHeight: 1.6 }}>
+              Are you sure you want to delete <strong>{deleteTarget.name}</strong>? This cannot be undone.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button type="button" onClick={() => setDeleteTarget(null)} style={outlineButtonStyle}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{ ...primaryButtonStyle, background: "#dc2626" }}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+        </ModalOverlay>
+      )}
+    </div>
+  );
+}
+
+// ─── Sub-components ────────────────────────────────────────────────────────
+
+function MiniStat({ value, label, accent }: { value: string; label: string; accent: string }) {
+  return (
+    <div style={{ background: "#ffffff", border: "1px solid #dde5ef", borderRadius: 16, padding: "18px 20px", boxShadow: "0 1px 3px rgba(16,24,40,0.04)" }}>
+      <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: accent, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 12, color: "#8a9bb0", marginTop: 5, fontWeight: 500 }}>{label}</div>
+    </div>
+  );
+}
+
+function FormField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#455468", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+        {label}
+      </label>
+      {children}
+      {hint && <div style={{ fontSize: 11, color: "#8a9bb0", marginTop: 4 }}>{hint}</div>}
+    </div>
+  );
+}
+
+function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(15,22,35,0.45)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: "#ffffff", borderRadius: 20, padding: 28, width: "100%", maxWidth: 480, boxShadow: "0 24px 64px rgba(0,0,0,0.18)", animation: "fadeIn 0.18s ease" }}>
+        {children}
       </div>
     </div>
   );
 }
+
+// ─── Styles ────────────────────────────────────────────────────────────────
+
+const primaryButtonStyle: React.CSSProperties = {
+  padding: "10px 18px",
+  borderRadius: 10,
+  border: "none",
+  background: "#2f6fed",
+  color: "#ffffff",
+  fontWeight: 700,
+  cursor: "pointer",
+  fontSize: 13.5,
+  fontFamily: "inherit",
+  whiteSpace: "nowrap",
+};
+
+const outlineButtonStyle: React.CSSProperties = {
+  padding: "10px 16px",
+  borderRadius: 10,
+  border: "1px solid #dde5ef",
+  background: "#ffffff",
+  color: "#455468",
+  fontWeight: 600,
+  cursor: "pointer",
+  fontSize: 13.5,
+  fontFamily: "inherit",
+};
+
+const outlineButtonSmallStyle: React.CSSProperties = {
+  padding: "6px 12px",
+  borderRadius: 8,
+  border: "1px solid #dde5ef",
+  background: "#f8fafc",
+  color: "#455468",
+  fontWeight: 600,
+  cursor: "pointer",
+  fontSize: 12,
+  fontFamily: "inherit",
+};
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 13px",
+  borderRadius: 10,
+  border: "1px solid #dde5ef",
+  fontSize: 13.5,
+  fontFamily: "inherit",
+  color: "#0f1623",
+  background: "#f8fafc",
+  outline: "none",
+  boxSizing: "border-box",
+};
+
+const spinnerStyle: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  border: "3px solid #dde5ef",
+  borderTopColor: "#2f6fed",
+  borderRadius: "50%",
+  animation: "spin 0.7s linear infinite",
+  margin: "0 auto",
+};
