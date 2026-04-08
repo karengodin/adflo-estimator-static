@@ -108,29 +108,48 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </div>
 
             {/* Nav */}
-            <nav
-              style={{
-                flex: 1,
-                padding: "12px 10px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 2,
-              }}
-            >
-              <NavSection label="Main" collapsed={collapsed} />
-              <NavItem href="/" label="Home" collapsed={collapsed} icon="🏠" pathname={pathname} exact />
-              <NavItem href="/estimator" label="adfloEstimate" collapsed={collapsed} icon="📋" pathname={pathname} exact />
-              <NavItem href="/estimator/sessions" label="Sessions" collapsed={collapsed} icon="🗂️" pathname={pathname} />
+<nav
+  style={{
+    flex: 1,
+    padding: "12px 10px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+  }}
+>
+  <NavSection label="Main" collapsed={collapsed} />
+  <NavItem href="/" label="Home" collapsed={collapsed} icon="🏠" pathname={pathname} exact />
+  <NavItem href="/estimator" label="adfloEstimate" collapsed={collapsed} icon="📋" pathname={pathname} exact />
+  <NavItem href="/estimator/sessions" label="Sessions" collapsed={collapsed} icon="🗂️" pathname={pathname} />
 {false && (
-              <NavSection label="Tools" collapsed={collapsed} />
-              <NavItem href="/adfloxtract" label="adfloXtract" collapsed={collapsed} icon="🔀" pathname={pathname} />
-              <NavItem href="/migration" label="adfloMigrate" collapsed={collapsed} icon="🔄" pathname={pathname} />
-              <NavItem href="/instances" label="Instances" collapsed={collapsed} icon="🖥️" pathname={pathname} />
-
-              <NavSection label="Settings" collapsed={collapsed} />
-              <NavItem href="/admin" label="Admin" collapsed={collapsed} icon="⚙️" pathname={pathname} />
-            </nav>
-)}
+                <>
+                  <NavSection label="Tools" collapsed={collapsed} />
+                  <NavItem
+                    href="/adfloxtract"
+                    label="adfloXtract"
+                    collapsed={collapsed}
+                    icon="🔁"
+                    pathname={pathname}
+                  />
+                  <NavItem
+                    href="/migration"
+                    label="adfloMigrate"
+                    collapsed={collapsed}
+                    icon="↔️"
+                    pathname={pathname}
+                  />
+                  <NavItem
+                    href="/instances"
+                    label="Instances"
+                    collapsed={collapsed}
+                    icon="🖥️"
+                    pathname={pathname}
+                  />
+                </>
+              )}
+  <NavSection label="Settings" collapsed={collapsed} />
+  <NavItem href="/admin" label="Admin" collapsed={collapsed} icon="⚙️" pathname={pathname} />
+</nav>
             {/* Footer */}
             {!collapsed && (
               <div
