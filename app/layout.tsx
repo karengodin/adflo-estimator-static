@@ -231,7 +231,7 @@ function NavItem({
 
   return (
     <Link
-      href={href}
+      href={href as any}
       title={collapsed ? label : undefined}
       style={{
         display: "flex",
@@ -294,7 +294,7 @@ function Breadcrumb({ pathname }: { pathname: string | null }) {
             {isLast ? (
               <span style={{ fontSize: 13, color: "#2f6fed", fontWeight: 600 }}>{label}</span>
             ) : (
-              <Link href={href} style={{ fontSize: 13, color: "#8a9bb0", textDecoration: "none" }}>
+              <Link href={href as any} style={{ fontSize: 13, color: "#8a9bb0", textDecoration: "none" }}>
                 {label}
               </Link>
             )}
