@@ -5,8 +5,16 @@ node_modules
 .next
 
 # local env files
-.env.local
 .env
+.env*.local
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# editor artifacts
+*.swp
+*.swo
 
 # macOS junk
 .DS_Store
