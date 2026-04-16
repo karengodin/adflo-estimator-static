@@ -4,11 +4,9 @@ import { supabaseServer } from "../../../lib/supabaseServer";
 
 export async function GET() {
   const { data, error } = await supabaseServer
-    .from("tapclicks_instances")
-    .select(
-      "id, instance_key, label, base_url, login_email, is_active, encrypted_cookie, last_login_at, last_login_status, last_error, created_at, updated_at"
-    )
-    .order("label", { ascending: true });
+    .from("instances")
+    .select("id, name, base_url, session_cookie, cookie_expires_at, last_connected_at")
+    .order("name", { ascending: true });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -21,57 +19,30 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    const {
-      instance_key,
-      label,
-      base_url,
-      login_email,
-      password,
-      session_cookie,
-      is_active = true,
-    } = body;
+    const { name, base_url, session_cookie } = body;
 
-    if (!instance_key || !label || !base_url || !login_email) {
+    if (!name || !name.trim() || !base_url || !base_url.trim()) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: "Missing required fields: name, base_url" },
         { status: 400 }
       );
     }
 
-    const { data: existing } = await supabaseServer
-      .from("tapclicks_instances")
-      .select("encrypted_password, encrypted_cookie")
-      .eq("instance_key", instance_key)
-      .maybeSingle();
-
-    const encrypted_password =
-      password && password.trim()
-        ? encryptText(password.trim())
-        : existing?.encrypted_password || "";
-
     const encrypted_cookie =
       session_cookie && session_cookie.trim()
         ? encryptText(session_cookie.trim())
-        : existing?.encrypted_cookie || null;
+        : null;
 
     const { data, error } = await supabaseServer
-      .from("tapclicks_instances")
-      .upsert(
-        {
-          instance_key,
-          label,
-          base_url,
-          login_email,
-          encrypted_password,
-          encrypted_cookie,
-          is_active,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "instance_key" }
-      )
-      .select(
-        "id, instance_key, label, base_url, login_email, is_active, encrypted_cookie, last_login_at, last_login_status, last_error, created_at, updated_at"
-      )
+      .from("instances")
+      .insert({
+        name: name.trim(),
+        base_url: base_url.trim(),
+        session_cookie: encrypted_cookie,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      })
+      .select("id, name, base_url, session_cookie, cookie_expires_at, last_connected_at, created_at")
       .single();
 
     if (error) {

@@ -32,7 +32,7 @@ export async function POST(
   const { id } = await context.params;
 
   const { data: instance, error: fetchError } = await supabaseServer
-    .from("tapclicks_instances")
+    .from("instances")
     .select("*")
     .eq("id", id)
     .single();
@@ -57,30 +57,27 @@ export async function POST(
     const initialSetCookies = extractSetCookie(loginPageResponse.headers);
     const initialCookieHeader = collapseCookies(initialSetCookies);
 
-   if (!formKey) {
-  const snippet = loginPageHtml.slice(0, 2000);
+    if (!formKey) {
+      const snippet = loginPageHtml.slice(0, 2000);
 
-  await supabaseServer
-    .from("tapclicks_instances")
-    .update({
-      last_login_at: new Date().toISOString(),
-      last_login_status: "failed",
-      last_error: "Could not find form_key on login page",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
+      await supabaseServer
+        .from("instances")
+        .update({
+          last_connected_at: new Date().toISOString(),
+          last_login_status: "failed",
+          last_error: "Could not find form_key on login page",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
 
-  return NextResponse.json(
-    {
-      error: "Could not find form_key on login page",
-      debug: {
-        loginPageUrl,
-        snippet,
-      },
-    },
-    { status: 400 }
-  );
-}
+      return NextResponse.json(
+        {
+          error: "Could not find form_key on login page",
+          debug: { loginPageUrl, snippet },
+        },
+        { status: 400 }
+      );
+    }
 
     // STEP 2: POST credentials + form_key + initial cookies
     const body = new URLSearchParams();
@@ -101,7 +98,6 @@ export async function POST(
     const loginSetCookies = extractSetCookie(loginPostResponse.headers);
     const loginCookieHeader = collapseCookies(loginSetCookies);
 
-    // Sometimes login succeeds via redirect even if cookies are sparse
     const location = loginPostResponse.headers.get("location");
     const status = loginPostResponse.status;
 
@@ -115,9 +111,9 @@ export async function POST(
       const responseText = await loginPostResponse.text();
 
       await supabaseServer
-        .from("tapclicks_instances")
+        .from("instances")
         .update({
-          last_login_at: new Date().toISOString(),
+          last_connected_at: new Date().toISOString(),
           last_login_status: "failed",
           last_error: `Login did not succeed. Status: ${status}. Location: ${
             location || "none"
@@ -143,10 +139,10 @@ export async function POST(
     const cookieToStore = loginCookieHeader || initialCookieHeader;
 
     await supabaseServer
-      .from("tapclicks_instances")
+      .from("instances")
       .update({
-        encrypted_cookie: encryptText(cookieToStore),
-        last_login_at: new Date().toISOString(),
+        session_cookie: encryptText(cookieToStore),
+        last_connected_at: new Date().toISOString(),
         last_login_status: "success",
         last_error: null,
         updated_at: new Date().toISOString(),
@@ -155,17 +151,13 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      debug: {
-        status,
-        location,
-        usedCookie: !!cookieToStore,
-      },
+      debug: { status, location, usedCookie: !!cookieToStore },
     });
   } catch (error) {
     await supabaseServer
-      .from("tapclicks_instances")
+      .from("instances")
       .update({
-        last_login_at: new Date().toISOString(),
+        last_connected_at: new Date().toISOString(),
         last_login_status: "failed",
         last_error:
           error instanceof Error ? error.message : "Unknown login error",
