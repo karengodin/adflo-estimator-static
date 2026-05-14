@@ -6,9 +6,6 @@ type Instance = {
   id: string;
   name: string;
   base_url: string;
-  login_email: string | null;
-  instance_key: string | null;
-  instance_type: "classic" | "adflo";
   session_cookie: string | null;
   cookie_expires_at: string | null;
   last_connected_at: string | null;
@@ -37,9 +34,8 @@ const STATUS_STYLE: Record<CookieStatus, React.CSSProperties> = {
 };
 
 // Strips Set-Cookie header attributes (expires, path, domain, etc.) so users can
-// paste either the raw cookie value or a full Set-Cookie header and get the same result.
-// Handles multiple cookies separated by commas correctly — it only splits on ", name="
-// patterns, not on commas inside date values like "Thu, 14 May 2026".
+// paste either a raw cookie value or a full Set-Cookie header and get the same result.
+// Splits only on ", name=" patterns so commas inside date values are preserved.
 function cleanCookie(raw: string): string {
   const trimmed = raw.trim();
   if (/;\s*(expires|path|domain|secure|httponly|samesite)=/i.test(trimmed)) {
@@ -60,13 +56,9 @@ export default function InstancesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [loginEmail, setLoginEmail] = useState("");
-  const [instanceKey, setInstanceKey] = useState("");
-  const [instanceType, setInstanceType] = useState<"classic" | "adflo">("classic");
   const [sessionCookie, setSessionCookie] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [profileFetching, setProfileFetching] = useState(false);
 
   // Inline cookie refresh state
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -88,9 +80,6 @@ export default function InstancesPage() {
     setEditingId(null);
     setName("");
     setBaseUrl("");
-    setLoginEmail("");
-    setInstanceKey("");
-    setInstanceType("classic");
     setSessionCookie("");
     setSaveError(null);
   };
@@ -99,12 +88,9 @@ export default function InstancesPage() {
     setEditingId(instance.id);
     setName(instance.name);
     setBaseUrl(instance.base_url);
-    setLoginEmail(instance.login_email ?? "");
-    setInstanceKey(instance.instance_key ?? "");
-    setInstanceType(instance.instance_type ?? "classic");
-    setSessionCookie(""); // stored encrypted — leave blank, only update if user provides new value
+    setSessionCookie("");
     setSaveError(null);
-    setRefreshingId(null); // close any open cookie refresh panel
+    setRefreshingId(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -116,7 +102,6 @@ export default function InstancesPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !baseUrl.trim()) return;
-    // Require cookie only when adding a new instance
     if (!editingId && !sessionCookie.trim()) return;
 
     setSaving(true);
@@ -126,13 +111,9 @@ export default function InstancesPage() {
 
     let res: Response;
     if (editingId) {
-      // Update existing instance
       const body: Record<string, string> = {
         name: name.trim(),
         base_url: normalizedUrl,
-        login_email: loginEmail.trim(),
-        instance_key: instanceKey.trim(),
-        instance_type: instanceType,
       };
       if (sessionCookie.trim()) body.session_cookie = cleanCookie(sessionCookie);
 
@@ -142,16 +123,12 @@ export default function InstancesPage() {
         body: JSON.stringify(body),
       });
     } else {
-      // Create new instance
       res = await fetch("/api/tapclicks-instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim(),
           base_url: normalizedUrl,
-          login_email: loginEmail.trim() || undefined,
-          instance_key: instanceKey.trim() || undefined,
-          instance_type: instanceType,
           session_cookie: cleanCookie(sessionCookie),
         }),
       });
@@ -160,39 +137,11 @@ export default function InstancesPage() {
     const data = await res.json();
     if (!res.ok) {
       setSaveError(data.error || "Failed to save instance.");
-      setSaving(false);
-      return;
+    } else {
+      resetForm();
+      await loadInstances();
     }
-
-    resetForm();
-    await loadInstances();
     setSaving(false);
-
-    // After saving a Classic instance that has a cookie, try to auto-populate
-    // login_email from the TapClicks user profile API. Non-fatal if it fails.
-    const savedId: string | undefined = data.id ?? (editingId ?? undefined);
-    const cookieWasProvided = !!sessionCookie.trim();
-    const isClassic = instanceType === "classic";
-    const emailAlreadySet = !!loginEmail.trim();
-
-    if (savedId && isClassic && cookieWasProvided && !emailAlreadySet) {
-      setProfileFetching(true);
-      try {
-        const whoami = await fetch(`/api/tapclicks-instances/${savedId}/whoami`).then(r => r.json());
-        if (whoami.email) {
-          await fetch(`/api/tapclicks-instances/${savedId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ login_email: whoami.email }),
-          });
-          await loadInstances();
-        }
-      } catch {
-        // Silent — user can set email manually
-      } finally {
-        setProfileFetching(false);
-      }
-    }
   };
 
   const handleDelete = async (id: string) => {
@@ -260,7 +209,9 @@ export default function InstancesPage() {
           marginBottom: 16,
         }}>
           <div style={{ fontWeight: 600, fontSize: 15, color: "#0f1623" }}>
-            {isEditing ? `Editing: ${instances.find(i => i.id === editingId)?.name ?? "Instance"}` : "Add Instance"}
+            {isEditing
+              ? `Editing: ${instances.find(i => i.id === editingId)?.name ?? "Instance"}`
+              : "Add Instance"}
           </div>
           {isEditing && (
             <button
@@ -299,36 +250,6 @@ export default function InstancesPage() {
               required
             />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={labelStyle}>Login Email</label>
-            <input
-              style={inputStyle}
-              placeholder="user@example.com"
-              type="email"
-              value={loginEmail}
-              onChange={e => setLoginEmail(e.target.value)}
-            />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={labelStyle}>Instance Key</label>
-            <input
-              style={inputStyle}
-              placeholder="e.g. AUDACY"
-              value={instanceKey}
-              onChange={e => setInstanceKey(e.target.value)}
-            />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={labelStyle}>Type</label>
-            <select
-              style={{ ...inputStyle, cursor: "pointer" }}
-              value={instanceType}
-              onChange={e => setInstanceType(e.target.value as "classic" | "adflo")}
-            >
-              <option value="classic">Classic TapClicks</option>
-              <option value="adflo">Adflo OMS</option>
-            </select>
-          </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
@@ -365,12 +286,6 @@ export default function InstancesPage() {
           {saving ? "Saving…" : isEditing ? "Update Instance" : "Save Instance"}
         </button>
       </form>
-
-      {profileFetching && (
-        <div style={{ fontSize: 13, color: "#2f6fed", marginBottom: 12, padding: "8px 14px", background: "rgba(47,111,237,0.06)", borderRadius: 8 }}>
-          Fetching user profile from TapClicks to auto-populate email…
-        </div>
-      )}
 
       {/* ── Instances table ── */}
       <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, overflow: "hidden" }}>
@@ -416,25 +331,7 @@ export default function InstancesPage() {
                       }}
                     >
                       <td style={tdStyle}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ fontWeight: 600, color: "#0f1623" }}>{instance.name}</span>
-                          <span style={{
-                            fontSize: 11,
-                            fontWeight: 600,
-                            padding: "2px 8px",
-                            borderRadius: 999,
-                            ...(instance.instance_type === "adflo"
-                              ? { background: "rgba(139,92,246,0.12)", color: "#7c3aed" }
-                              : { background: "rgba(47,111,237,0.10)", color: "#2f6fed" }),
-                          }}>
-                            {instance.instance_type === "adflo" ? "Adflo OMS" : "Classic"}
-                          </span>
-                        </div>
-                        {instance.login_email && (
-                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
-                            {instance.login_email}
-                          </div>
-                        )}
+                        <span style={{ fontWeight: 600, color: "#0f1623" }}>{instance.name}</span>
                       </td>
                       <td style={tdStyle}>
                         <a
@@ -461,10 +358,7 @@ export default function InstancesPage() {
                         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                           <button
                             onClick={() => isBeingEdited ? resetForm() : handleEdit(instance)}
-                            style={{
-                              ...ghostBtnStyle,
-                              color: isBeingEdited ? "#64748b" : "#0f1623",
-                            }}
+                            style={{ ...ghostBtnStyle, color: isBeingEdited ? "#64748b" : "#0f1623" }}
                           >
                             {isBeingEdited ? "Cancel Edit" : "Edit"}
                           </button>
@@ -488,7 +382,6 @@ export default function InstancesPage() {
                       </td>
                     </tr>
 
-                    {/* Inline refresh cookie row */}
                     {isRefreshing && (
                       <tr key={`${instance.id}-refresh`} style={{ background: "#f8fafc", borderTop: "1px solid #eef3f8" }}>
                         <td colSpan={4} style={{ padding: "14px 20px" }}>
