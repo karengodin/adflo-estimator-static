@@ -5,7 +5,7 @@ import { supabaseServer } from "../../../lib/supabaseServer";
 export async function GET() {
   const { data, error } = await supabaseServer
     .from("instances")
-    .select("id, name, base_url, login_email, instance_key, session_cookie, cookie_expires_at, last_connected_at")
+    .select("id, name, base_url, login_email, instance_key, instance_type, session_cookie, cookie_expires_at, last_connected_at")
     .order("name", { ascending: true });
 
   if (error) {
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    const { name, base_url: rawUrl, session_cookie, login_email, instance_key } = body;
+    const { name, base_url: rawUrl, session_cookie, login_email, instance_key, instance_type } = body;
 
     if (!name || !name.trim() || !rawUrl || !rawUrl.trim()) {
       return NextResponse.json(
@@ -44,11 +44,12 @@ export async function POST(req: NextRequest) {
         base_url,
         login_email: login_email?.trim() || null,
         instance_key: instance_key?.trim() || null,
+        instance_type: instance_type === "adflo" ? "adflo" : "classic",
         session_cookie: encrypted_cookie,
         is_active: true,
         updated_at: new Date().toISOString(),
       })
-      .select("id, name, base_url, login_email, instance_key, session_cookie, cookie_expires_at, last_connected_at, created_at")
+      .select("id, name, base_url, login_email, instance_key, instance_type, session_cookie, cookie_expires_at, last_connected_at, created_at")
       .single();
 
     if (error) {

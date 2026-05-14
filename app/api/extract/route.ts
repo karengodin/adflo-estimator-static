@@ -218,7 +218,7 @@ async function handleExtract(req: NextRequest) {
 
   const { data: instance, error: instanceError } = await supabaseServer
     .from("instances")
-    .select("id, name, base_url, session_cookie")
+    .select("id, name, base_url, instance_type, session_cookie")
     .eq("id", instanceId)
     .single();
 
@@ -231,7 +231,17 @@ async function handleExtract(req: NextRequest) {
     instance.base_url = "https://" + instance.base_url;
   }
 
-  console.log(`[extract] Instance found: "${instance.name}" base_url=${instance.base_url} hasCookie=${!!instance.session_cookie}`);
+  // Adflo OMS uses a different (not yet known) API surface — block early with a
+  // clear message rather than silently hitting Classic endpoints on the wrong host.
+  if (instance.instance_type === "adflo") {
+    console.error(`[extract] Adflo extraction not supported: instance="${instance.name}"`);
+    return NextResponse.json(
+      { error: "Adflo extraction not yet supported. This instance is configured as Adflo OMS — extraction endpoints for Adflo have not been implemented." },
+      { status: 400 }
+    );
+  }
+
+  console.log(`[extract] Instance found: "${instance.name}" type=${instance.instance_type} base_url=${instance.base_url} hasCookie=${!!instance.session_cookie}`);
 
   if (!instance.session_cookie) {
     return NextResponse.json(

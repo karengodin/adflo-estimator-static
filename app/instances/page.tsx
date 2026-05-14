@@ -8,6 +8,7 @@ type Instance = {
   base_url: string;
   login_email: string | null;
   instance_key: string | null;
+  instance_type: "classic" | "adflo";
   session_cookie: string | null;
   cookie_expires_at: string | null;
   last_connected_at: string | null;
@@ -45,6 +46,7 @@ export default function InstancesPage() {
   const [baseUrl, setBaseUrl] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [instanceKey, setInstanceKey] = useState("");
+  const [instanceType, setInstanceType] = useState<"classic" | "adflo">("classic");
   const [sessionCookie, setSessionCookie] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -71,6 +73,7 @@ export default function InstancesPage() {
     setBaseUrl("");
     setLoginEmail("");
     setInstanceKey("");
+    setInstanceType("classic");
     setSessionCookie("");
     setSaveError(null);
   };
@@ -81,6 +84,7 @@ export default function InstancesPage() {
     setBaseUrl(instance.base_url);
     setLoginEmail(instance.login_email ?? "");
     setInstanceKey(instance.instance_key ?? "");
+    setInstanceType(instance.instance_type ?? "classic");
     setSessionCookie(""); // stored encrypted — leave blank, only update if user provides new value
     setSaveError(null);
     setRefreshingId(null); // close any open cookie refresh panel
@@ -111,6 +115,7 @@ export default function InstancesPage() {
         base_url: normalizedUrl,
         login_email: loginEmail.trim(),
         instance_key: instanceKey.trim(),
+        instance_type: instanceType,
       };
       if (sessionCookie.trim()) body.session_cookie = sessionCookie.trim();
 
@@ -129,6 +134,7 @@ export default function InstancesPage() {
           base_url: normalizedUrl,
           login_email: loginEmail.trim() || undefined,
           instance_key: instanceKey.trim() || undefined,
+          instance_type: instanceType,
           session_cookie: sessionCookie.trim(),
         }),
       });
@@ -267,6 +273,17 @@ export default function InstancesPage() {
               onChange={e => setInstanceKey(e.target.value)}
             />
           </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={labelStyle}>Type</label>
+            <select
+              style={{ ...inputStyle, cursor: "pointer" }}
+              value={instanceType}
+              onChange={e => setInstanceType(e.target.value as "classic" | "adflo")}
+            >
+              <option value="classic">Classic TapClicks</option>
+              <option value="adflo">Adflo OMS</option>
+            </select>
+          </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
@@ -348,7 +365,20 @@ export default function InstancesPage() {
                       }}
                     >
                       <td style={tdStyle}>
-                        <span style={{ fontWeight: 600, color: "#0f1623" }}>{instance.name}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontWeight: 600, color: "#0f1623" }}>{instance.name}</span>
+                          <span style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            ...(instance.instance_type === "adflo"
+                              ? { background: "rgba(139,92,246,0.12)", color: "#7c3aed" }
+                              : { background: "rgba(47,111,237,0.10)", color: "#2f6fed" }),
+                          }}>
+                            {instance.instance_type === "adflo" ? "Adflo OMS" : "Classic"}
+                          </span>
+                        </div>
                         {instance.login_email && (
                           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
                             {instance.login_email}
