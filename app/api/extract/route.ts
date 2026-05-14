@@ -168,11 +168,27 @@ function parseResponse(entityType: string, parsed: unknown): ExtractedItem[] {
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // Top-level catch so any unhandled exception surfaces in the server terminal
+  // rather than producing a generic 500 with no detail.
+  try {
+    return await handleExtract(req);
+  } catch (err) {
+    console.error("[extract] Unhandled exception:", err);
+    return NextResponse.json(
+      { error: "Internal server error", detail: String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleExtract(req: NextRequest) {
   const body = await req.json();
   const { instanceId, entityType } = body as {
     instanceId: string;
     entityType: string;
   };
+
+  console.log(`[extract] POST instanceId=${instanceId} entityType=${entityType}`);
 
   // ── 1. Validate ─────────────────────────────────────────────────────────────
 
@@ -194,8 +210,6 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 2. Auth: fetch instance and decrypt cookie ───────────────────────────────
-  //
-  // Same pattern as the migrate route — cookie never comes from the browser.
 
   const { data: instance, error: instanceError } = await supabaseServer
     .from("instances")
@@ -204,8 +218,12 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (instanceError || !instance) {
+    console.error("[extract] Instance not found:", instanceId, instanceError?.message);
     return NextResponse.json({ error: "Instance not found" }, { status: 400 });
   }
+
+  console.log(`[extract] Instance found: "${instance.name}" base_url=${instance.base_url} hasCookie=${!!instance.session_cookie}`);
+
   if (!instance.session_cookie) {
     return NextResponse.json(
       {
@@ -218,7 +236,9 @@ export async function POST(req: NextRequest) {
   let cookie: string;
   try {
     cookie = decryptText(instance.session_cookie);
-  } catch {
+    console.log(`[extract] Cookie decrypted OK, length=${cookie.length}`);
+  } catch (err) {
+    console.error("[extract] Cookie decrypt failed:", err);
     return NextResponse.json(
       { error: "Failed to decrypt session cookie. Try refreshing it on the Instances page." },
       { status: 500 }
@@ -229,6 +249,8 @@ export async function POST(req: NextRequest) {
 
   const base = instance.base_url.replace(/\/+$/, "");
   const url = `${base}${endpoint}${QUERY_SUFFIX}`;
+
+  console.log(`[extract] Calling TapClicks: GET ${url}`);
 
   let rawBody: string;
   let httpCode: number;
@@ -245,7 +267,9 @@ export async function POST(req: NextRequest) {
 
     httpCode = response.status;
     rawBody = await response.text();
+    console.log(`[extract] TapClicks responded: HTTP ${httpCode}, body length=${rawBody.length}, preview="${rawBody.slice(0, 120)}"`);
   } catch (err) {
+    console.error("[extract] Network error:", err);
     return NextResponse.json(
       { error: `Network error reaching TapClicks: ${String(err).slice(0, 200)}` },
       { status: 502 }
@@ -253,6 +277,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (httpCode < 200 || httpCode >= 300) {
+    console.error(`[extract] TapClicks non-2xx: HTTP ${httpCode}, body="${rawBody.slice(0, 300)}"`);
     return NextResponse.json(
       { error: `TapClicks API returned HTTP ${httpCode}`, snippet: rawBody.slice(0, 500) },
       { status: 502 }
@@ -265,6 +290,7 @@ export async function POST(req: NextRequest) {
   try {
     parsed = JSON.parse(rawBody);
   } catch {
+    console.error(`[extract] Non-JSON response from TapClicks: "${rawBody.slice(0, 300)}"`);
     return NextResponse.json(
       { error: "TapClicks returned non-JSON response", snippet: rawBody.slice(0, 500) },
       { status: 502 }
@@ -277,6 +303,7 @@ export async function POST(req: NextRequest) {
     typeof parsed === "object" &&
     (parsed as Record<string, unknown>).state === "login"
   ) {
+    console.error("[extract] Auth expired — TapClicks returned login state");
     return NextResponse.json(
       { error: "Session expired. Refresh the session cookie on the Instances page." },
       { status: 401 }
@@ -284,25 +311,17 @@ export async function POST(req: NextRequest) {
   }
 
   const items = parseResponse(entityType, parsed);
+  console.log(`[extract] Parsed ${items.length} items for entityType=${entityType}`);
 
   if (items.length === 0) {
-    // Not necessarily an error — the instance may genuinely have no items of
-    // this type. Return success with count 0 so the UI can show "nothing found"
-    // rather than a confusing error state.
     return NextResponse.json({ count: 0, entityType, items: [] });
   }
 
-  // ── 5. Upsert to extractions ─────────────────────────────────────────────────
+  // ── 5. Save to extractions ───────────────────────────────────────────────────
   //
-  // Each item gets its own row. Upsert on (instance_id, entity_type, item_id)
-  // so re-running a extraction refreshes existing rows instead of duplicating.
-  //
-  // Requires the unique index created in the PREREQUISITE SQL at the top of
-  // this file. If that index doesn't exist yet, this call will insert instead
-  // of upsert (Supabase falls back to insert when the conflict target is missing).
-  //
-  // `created_at` is set explicitly so it reflects the time of THIS extraction
-  // run, not the original insertion time. This is our `extracted_at` timestamp.
+  // Delete existing rows for this instance + entity type, then insert fresh.
+  // This is simpler than upsert-on-conflict (no unique index required) and is
+  // the right semantic for re-extraction: old rows are fully replaced.
 
   const rows = items.map((item) => ({
     instance_id:     instanceId,
@@ -314,16 +333,38 @@ export async function POST(req: NextRequest) {
     created_at:      new Date().toISOString(),
   }));
 
-  const { error: upsertError } = await supabaseServer
-    .from("extractions")
-    .upsert(rows, { onConflict: "instance_id,entity_type,item_id" });
+  console.log(`[extract] Deleting existing rows for instance=${instanceId} entityType=${entityType}`);
 
-  if (upsertError) {
+  const { error: deleteError } = await supabaseServer
+    .from("extractions")
+    .delete()
+    .eq("instance_id", instanceId)
+    .eq("entity_type", entityType);
+
+  if (deleteError) {
+    console.error("[extract] Delete failed:", deleteError.message, deleteError);
     return NextResponse.json(
-      { error: `Failed to save extractions: ${upsertError.message}` },
+      { error: `Failed to clear existing extractions: ${deleteError.message}` },
       { status: 500 }
     );
   }
+
+  console.log(`[extract] Inserting ${rows.length} rows`);
+
+  const { error: insertError } = await supabaseServer
+    .from("extractions")
+    .insert(rows);
+
+  if (insertError) {
+    console.error("[extract] Insert failed:", insertError.message, insertError);
+    return NextResponse.json(
+      { error: `Failed to save extractions: ${insertError.message}` },
+      { status: 500 }
+    );
+  }
+
+  console.log(`[extract] Insert OK — ${rows.length} rows saved`);
+
 
   // ── 6. Response ──────────────────────────────────────────────────────────────
   //
