@@ -28,23 +28,33 @@ export async function PATCH(
 
   try {
     const body = await req.json();
-    const { session_cookie } = body;
+    const { name, base_url: rawUrl, login_email, instance_key, session_cookie } = body;
 
-    if (!session_cookie || !session_cookie.trim()) {
+    // At least one field must be provided
+    if (!name && !rawUrl && !login_email && !instance_key && !session_cookie) {
       return NextResponse.json(
-        { error: "session_cookie is required" },
+        { error: "No fields provided to update" },
         { status: 400 }
       );
     }
 
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+    if (name?.trim())        updates.name         = name.trim();
+    if (rawUrl?.trim()) {
+      updates.base_url = rawUrl.trim().startsWith("http")
+        ? rawUrl.trim()
+        : "https://" + rawUrl.trim();
+    }
+    if (login_email !== undefined) updates.login_email  = login_email?.trim() || null;
+    if (instance_key !== undefined) updates.instance_key = instance_key?.trim() || null;
+    if (session_cookie?.trim())     updates.session_cookie = encryptText(session_cookie.trim());
+
     const { data, error } = await supabaseServer
       .from("instances")
-      .update({
-        session_cookie: encryptText(session_cookie.trim()),
-        updated_at: new Date().toISOString(),
-      })
+      .update(updates)
       .eq("id", id)
-      .select("id, name, base_url, session_cookie, cookie_expires_at, last_connected_at")
+      .select("id, name, base_url, login_email, instance_key, session_cookie, cookie_expires_at, last_connected_at")
       .single();
 
     if (error) {

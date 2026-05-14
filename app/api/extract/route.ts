@@ -174,8 +174,13 @@ export async function POST(req: NextRequest) {
     return await handleExtract(req);
   } catch (err) {
     console.error("[extract] Unhandled exception:", err);
+    if (err instanceof Error) console.error("[extract] Stack:", err.stack);
     return NextResponse.json(
-      { error: "Internal server error", detail: String(err) },
+      {
+        error: "Internal server error",
+        detail: String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      },
       { status: 500 }
     );
   }
@@ -220,6 +225,10 @@ async function handleExtract(req: NextRequest) {
   if (instanceError || !instance) {
     console.error("[extract] Instance not found:", instanceId, instanceError?.message);
     return NextResponse.json({ error: "Instance not found" }, { status: 400 });
+  }
+
+  if (!instance.base_url.startsWith("http")) {
+    instance.base_url = "https://" + instance.base_url;
   }
 
   console.log(`[extract] Instance found: "${instance.name}" base_url=${instance.base_url} hasCookie=${!!instance.session_cookie}`);

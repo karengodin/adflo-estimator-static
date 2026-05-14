@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "../../lib/supabase";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,33 +108,31 @@ export default function MigrationPage() {
     if (!instanceId) return;
     if (showLoadingSpinner) setExtractionsLoading(true);
 
-    // All extractions for this instance, grouped by entity_type
-    const { data: extractionRows } = await supabase
-      .from("extractions")
-      .select("item_id, item_name, reference_table, entity_type, created_at")
-      .eq("instance_id", instanceId)
-      .not("item_id", "is", null)
-      .order("item_name", { ascending: true });
+    // Use server-side API routes so the service role key is used — the
+    // extractions and migration_runs tables have RLS policies tied to user_id,
+    // but rows inserted by the extract/migrate routes have user_id=null (no
+    // user session). Querying via the anon key returns nothing. These routes
+    // use supabaseServer (service role) which bypasses RLS.
+    const [extractionRes, historyRes] = await Promise.all([
+      fetch(`/api/extractions?instanceId=${instanceId}`).then((r) => r.json()),
+      fetch(`/api/migration-runs?instanceId=${instanceId}`).then((r) => r.json()),
+    ]);
 
+    const extractionRows: ExtractionItem[] = Array.isArray(extractionRes) ? extractionRes : [];
     const byType: Record<string, ExtractionItem[]> = {};
-    for (const row of extractionRows ?? []) {
+    for (const row of extractionRows) {
       if (!byType[row.entity_type]) byType[row.entity_type] = [];
-      byType[row.entity_type].push(row as ExtractionItem);
+      byType[row.entity_type].push(row);
     }
     setExtractions(byType);
 
     // Latest migration run per (entity_type, item_id) — ordered DESC so first
     // occurrence per item is the most recent
-    const { data: historyRows } = await supabase
-      .from("migration_runs")
-      .select("entity_type, item_id, status, snippet, run_at")
-      .eq("instance_id", instanceId)
-      .order("run_at", { ascending: false });
-
+    const historyRows: (ItemHistory & { entity_type: string; item_id: string })[] =
+      Array.isArray(historyRes) ? historyRes : [];
     const histMap: Record<string, Record<string, ItemHistory>> = {};
-    for (const row of historyRows ?? []) {
+    for (const row of historyRows) {
       if (!histMap[row.entity_type]) histMap[row.entity_type] = {};
-      // First occurrence = most recent run for this item
       if (!histMap[row.entity_type][row.item_id]) {
         histMap[row.entity_type][row.item_id] = {
           status: row.status ?? "",

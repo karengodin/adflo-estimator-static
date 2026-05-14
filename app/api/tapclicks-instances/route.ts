@@ -5,7 +5,7 @@ import { supabaseServer } from "../../../lib/supabaseServer";
 export async function GET() {
   const { data, error } = await supabaseServer
     .from("instances")
-    .select("id, name, base_url, session_cookie, cookie_expires_at, last_connected_at")
+    .select("id, name, base_url, login_email, instance_key, session_cookie, cookie_expires_at, last_connected_at")
     .order("name", { ascending: true });
 
   if (error) {
@@ -19,14 +19,18 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    const { name, base_url, session_cookie } = body;
+    const { name, base_url: rawUrl, session_cookie, login_email, instance_key } = body;
 
-    if (!name || !name.trim() || !base_url || !base_url.trim()) {
+    if (!name || !name.trim() || !rawUrl || !rawUrl.trim()) {
       return NextResponse.json(
         { error: "Missing required fields: name, base_url" },
         { status: 400 }
       );
     }
+
+    const base_url = rawUrl.trim().startsWith("http")
+      ? rawUrl.trim()
+      : "https://" + rawUrl.trim();
 
     const encrypted_cookie =
       session_cookie && session_cookie.trim()
@@ -37,12 +41,14 @@ export async function POST(req: NextRequest) {
       .from("instances")
       .insert({
         name: name.trim(),
-        base_url: base_url.trim(),
+        base_url,
+        login_email: login_email?.trim() || null,
+        instance_key: instance_key?.trim() || null,
         session_cookie: encrypted_cookie,
         is_active: true,
         updated_at: new Date().toISOString(),
       })
-      .select("id, name, base_url, session_cookie, cookie_expires_at, last_connected_at, created_at")
+      .select("id, name, base_url, login_email, instance_key, session_cookie, cookie_expires_at, last_connected_at, created_at")
       .single();
 
     if (error) {
