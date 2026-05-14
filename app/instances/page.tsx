@@ -36,6 +36,22 @@ const STATUS_STYLE: Record<CookieStatus, React.CSSProperties> = {
   none:    { background: "rgba(148,163,184,0.12)", color: "#64748b" },
 };
 
+// Strips Set-Cookie header attributes (expires, path, domain, etc.) so users can
+// paste either the raw cookie value or a full Set-Cookie header and get the same result.
+// Handles multiple cookies separated by commas correctly — it only splits on ", name="
+// patterns, not on commas inside date values like "Thu, 14 May 2026".
+function cleanCookie(raw: string): string {
+  const trimmed = raw.trim();
+  if (/;\s*(expires|path|domain|secure|httponly|samesite)=/i.test(trimmed)) {
+    return trimmed
+      .split(/,\s*(?=[a-zA-Z_][a-zA-Z0-9_]*=)/)
+      .map(part => part.split(";")[0].trim())
+      .filter(Boolean)
+      .join("; ");
+  }
+  return trimmed;
+}
+
 export default function InstancesPage() {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +66,7 @@ export default function InstancesPage() {
   const [sessionCookie, setSessionCookie] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [profileFetching, setProfileFetching] = useState(false);
 
   // Inline cookie refresh state
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -117,7 +134,7 @@ export default function InstancesPage() {
         instance_key: instanceKey.trim(),
         instance_type: instanceType,
       };
-      if (sessionCookie.trim()) body.session_cookie = sessionCookie.trim();
+      if (sessionCookie.trim()) body.session_cookie = cleanCookie(sessionCookie);
 
       res = await fetch(`/api/tapclicks-instances/${editingId}`, {
         method: "PATCH",
@@ -135,7 +152,7 @@ export default function InstancesPage() {
           login_email: loginEmail.trim() || undefined,
           instance_key: instanceKey.trim() || undefined,
           instance_type: instanceType,
-          session_cookie: sessionCookie.trim(),
+          session_cookie: cleanCookie(sessionCookie),
         }),
       });
     }
@@ -143,11 +160,39 @@ export default function InstancesPage() {
     const data = await res.json();
     if (!res.ok) {
       setSaveError(data.error || "Failed to save instance.");
-    } else {
-      resetForm();
-      await loadInstances();
+      setSaving(false);
+      return;
     }
+
+    resetForm();
+    await loadInstances();
     setSaving(false);
+
+    // After saving a Classic instance that has a cookie, try to auto-populate
+    // login_email from the TapClicks user profile API. Non-fatal if it fails.
+    const savedId: string | undefined = data.id ?? (editingId ?? undefined);
+    const cookieWasProvided = !!sessionCookie.trim();
+    const isClassic = instanceType === "classic";
+    const emailAlreadySet = !!loginEmail.trim();
+
+    if (savedId && isClassic && cookieWasProvided && !emailAlreadySet) {
+      setProfileFetching(true);
+      try {
+        const whoami = await fetch(`/api/tapclicks-instances/${savedId}/whoami`).then(r => r.json());
+        if (whoami.email) {
+          await fetch(`/api/tapclicks-instances/${savedId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ login_email: whoami.email }),
+          });
+          await loadInstances();
+        }
+      } catch {
+        // Silent — user can set email manually
+      } finally {
+        setProfileFetching(false);
+      }
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -170,7 +215,7 @@ export default function InstancesPage() {
     const res = await fetch(`/api/tapclicks-instances/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_cookie: refreshCookie.trim() }),
+      body: JSON.stringify({ session_cookie: cleanCookie(refreshCookie) }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -320,6 +365,12 @@ export default function InstancesPage() {
           {saving ? "Saving…" : isEditing ? "Update Instance" : "Save Instance"}
         </button>
       </form>
+
+      {profileFetching && (
+        <div style={{ fontSize: 13, color: "#2f6fed", marginBottom: 12, padding: "8px 14px", background: "rgba(47,111,237,0.06)", borderRadius: 8 }}>
+          Fetching user profile from TapClicks to auto-populate email…
+        </div>
+      )}
 
       {/* ── Instances table ── */}
       <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, overflow: "hidden" }}>
