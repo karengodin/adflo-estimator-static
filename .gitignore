@@ -18,3 +18,7 @@ next-env.d.ts
 
 # macOS junk
 .DS_Store
+
+# scratch/backup files
+*.backup.tsx
+*.backup.ts
