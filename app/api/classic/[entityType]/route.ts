@@ -21,16 +21,28 @@ const FIXED_ENDPOINTS: Record<string, string> = {
 
 const VALID_ENTITY_TYPES = [...CLUSTER_AWARE, ...Object.keys(FIXED_ENDPOINTS)];
 
+// formsByClusterId ignores the entityType query param and returns ALL form types
+// in a single mixed response. Filter client-side by content_type_id.
+const CONTENT_TYPE_IDS: Record<string, number> = {
+  client:    3,
+  order:     2,
+  task:      1,
+  line_item: 4,
+  flight:    5,
+};
+
 // ─── URL builders ─────────────────────────────────────────────────────────────
 
 function buildClusterUrl(entityType: string, clusterId: string | number): string {
   if (entityType === "line_item" || entityType === "flight") {
     return `/app/iotool/products?clusterId=${clusterId}&showAll=yes`;
   }
+  // entityType param is sent but ignored by the server — content_type_id filter
+  // applied client-side after the response is received.
   return `/app/iotool/form/formsByClusterId?clusterId=${clusterId}&showAll=false&entityType=${entityType}`;
 }
 
-// ─── Parsers — each returns [{id, name}] ─────────────────────────────────────
+// ─── Parsers ──────────────────────────────────────────────────────────────────
 
 type ClassicItem = { id: string; name: string };
 
@@ -47,10 +59,36 @@ function parseLookupTypes(parsed: unknown): ClassicItem[] {
 }
 
 // /app/iotool/form/formsByClusterId → { forms: { "1": {...}, "2": {...} } }
-function parseFormsResponse(parsed: unknown): ClassicItem[] {
+// Returns ALL form types in one response regardless of the entityType query param.
+// Must filter by content_type_id after parsing.
+function parseFormsResponse(parsed: unknown, entityType: string): ClassicItem[] {
   const forms = (parsed as Record<string, unknown>)?.forms;
   if (!forms || typeof forms !== "object" || Array.isArray(forms)) return [];
-  return Object.values(forms as Record<string, unknown>)
+
+  const allForms = Object.values(forms as Record<string, unknown>);
+
+  // Log sample form objects so we can verify the actual response shape and
+  // confirm the content_type_id field name and values are correct.
+  if (allForms.length > 0) {
+    console.log(`[classic/${entityType}] formsByClusterId total forms in response: ${allForms.length}`);
+    console.log(`[classic/${entityType}] Sample form objects (first 3):`,
+      JSON.stringify(allForms.slice(0, 3), null, 2));
+  }
+
+  const expectedContentTypeId = CONTENT_TYPE_IDS[entityType];
+
+  const filtered = expectedContentTypeId != null
+    ? allForms.filter((raw) => {
+        const r = raw as Record<string, unknown>;
+        // Try both snake_case and camelCase field names as a precaution.
+        const ctId = Number(r.content_type_id ?? r.contentTypeId ?? r.type_id ?? -1);
+        return ctId === expectedContentTypeId;
+      })
+    : allForms;
+
+  console.log(`[classic/${entityType}] After filtering content_type_id=${expectedContentTypeId}: ${filtered.length} forms`);
+
+  return filtered
     .map((raw) => {
       const r = raw as Record<string, unknown>;
       return { id: String(r.id ?? "").trim(), name: String(r.name ?? r.label ?? "").trim() };
@@ -109,7 +147,7 @@ function parseClusterResponse(entityType: string, parsed: unknown): ClassicItem[
     case "lookup_type": return parseLookupTypes(parsed);
     case "client":
     case "order":
-    case "task":        return parseFormsResponse(parsed);
+    case "task":        return parseFormsResponse(parsed, entityType);
     case "line_item":   return parseProducts(parsed);
     case "flight":      return parseFlightForms(parsed);
     case "workflow":    return parseWorkflows(parsed);
@@ -123,8 +161,6 @@ function isSessionExpired(parsed: unknown): boolean {
   return !!(parsed && typeof parsed === "object" && (parsed as Record<string, unknown>).state === "login");
 }
 
-// Fetch and parse JSON from a Classic endpoint. Returns null on any failure
-// (network error, non-2xx, non-JSON) — callers skip null results silently.
 async function fetchJSON(url: string, headers: Record<string, string>): Promise<unknown | null> {
   try {
     const res = await fetch(url, { headers });
@@ -136,8 +172,6 @@ async function fetchJSON(url: string, headers: Record<string, string>): Promise<
   }
 }
 
-// GET /app/iotool/clusters — returns all cluster IDs excluding 0.
-// Response shape is unknown; we try the three most common variants.
 async function fetchClusterIds(base: string, headers: Record<string, string>): Promise<string[]> {
   const parsed = await fetchJSON(`${base}/app/iotool/clusters`, headers);
   if (!parsed) return [];
@@ -150,12 +184,14 @@ async function fetchClusterIds(base: string, headers: Record<string, string>): P
         ? (parsed as Record<string, unknown>).data as unknown[]
         : [];
 
-  return arr
+  const ids = arr
     .map((c) => String((c as Record<string, unknown>).id ?? (c as Record<string, unknown>).cluster_id ?? "").trim())
     .filter((id) => id && id !== "0");
+
+  console.log(`[classic] Clusters found: ${ids.length} — IDs: ${ids.join(", ")}`);
+  return ids;
 }
 
-// Deduplicate by id, keeping the first occurrence (clusterId=0 items win).
 function deduplicateById(items: ClassicItem[]): ClassicItem[] {
   const seen = new Set<string>();
   return items.filter(({ id }) => {
@@ -229,32 +265,30 @@ export async function GET(
   }
 
   // ── Cluster-aware types: fetch clusters, then fetch all in parallel ────────
-  //
-  // Step 1: get all cluster IDs (excludes 0 = "All Business Units")
-  const clusterIds = await fetchClusterIds(base, headers);
 
-  // Step 2: build the full set of clusterIds to query: [0, ...clusterIds]
+  const clusterIds = await fetchClusterIds(base, headers);
   const allClusterIds = ["0", ...clusterIds];
 
-  // Step 3: fetch all clusters in parallel
+  console.log(`[classic/${entityType}] Fetching ${allClusterIds.length} cluster(s): ${allClusterIds.join(", ")}`);
+
   const clusterResults = await Promise.all(
     allClusterIds.map(async (clusterId) => {
       const url = `${base}${buildClusterUrl(entityType, clusterId)}`;
       const parsed = await fetchJSON(url, headers);
       if (parsed === null) return [];
-      // If any cluster returns session-expired, surface it (we'll detect below)
       if (isSessionExpired(parsed)) return { expired: true } as unknown as ClassicItem[];
-      return parseClusterResponse(entityType, parsed);
+      const items = parseClusterResponse(entityType, parsed);
+      console.log(`[classic/${entityType}] clusterId=${clusterId} → ${items.length} items`);
+      return items;
     })
   );
 
-  // Surface session expiry if any cluster hit it
   if (clusterResults.some((r) => !Array.isArray(r) && (r as unknown as { expired: boolean }).expired)) {
     return NextResponse.json({ error: "Session expired. Refresh the cookie on the Instances page." }, { status: 401 });
   }
 
-  // Step 4: combine all results, deduplicate by id (clusterId=0 items win)
   const combined = deduplicateById((clusterResults as ClassicItem[][]).flat());
+  console.log(`[classic/${entityType}] Final count after dedup: ${combined.length}`);
 
   return NextResponse.json(combined);
 }
