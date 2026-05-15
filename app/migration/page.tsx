@@ -264,75 +264,8 @@ function ClassicTab({
   allRuns: Record<string, Record<string, MigrationRun[]>>;
   onRefresh: (silent: boolean) => void;
 }) {
-  const [extracting, setExtracting] = useState<Record<string, boolean>>({});
-
-  const handleExtract = async (entityType: string) => {
-    setExtracting((p) => ({ ...p, [entityType]: true }));
-    try {
-      await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instanceId, entityType }),
-      });
-      onRefresh(true);
-    } finally {
-      setExtracting((p) => ({ ...p, [entityType]: false }));
-    }
-  };
-
-  const isAnyExtracting = Object.values(extracting).some(Boolean);
-
-  const getLastExtracted = (entityType: string) =>
-    (extractions[entityType] ?? []).reduce<string | null>(
-      (latest, item) => (!latest || item.created_at > latest ? item.created_at : latest),
-      null
-    );
-
   return (
     <>
-      {/* ── Extraction status card ── */}
-      <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, marginBottom: 20, overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid #dde5ef", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#0f1623" }}>Extraction Status</div>
-          <button
-            onClick={async () => { for (const { key } of ENTITY_TYPES) await handleExtract(key); }}
-            disabled={isAnyExtracting}
-            style={{ ...primaryBtnStyle, fontSize: 12, padding: "7px 14px", opacity: isAnyExtracting ? 0.6 : 1 }}
-          >
-            {isAnyExtracting ? "Extracting…" : "Extract All"}
-          </button>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)" }}>
-          {ENTITY_TYPES.map(({ key, label }, i) => {
-            const count = extractions[key]?.length ?? 0;
-            const isExtracting = !!extracting[key];
-            return (
-              <div key={key} style={{
-                padding: "14px 18px",
-                borderRight: (i + 1) % 3 !== 0 ? "1px solid #eef3f8" : "none",
-                borderBottom: i < 3 ? "1px solid #eef3f8" : "none",
-              }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#627286", marginBottom: 4 }}>{label}</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: "#0f1623", lineHeight: 1, marginBottom: 3 }}>
-                  {count > 0 ? count : "—"}
-                </div>
-                <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>
-                  {getLastExtracted(key) ? `Extracted ${formatDate(getLastExtracted(key))}` : "Not extracted"}
-                </div>
-                <button
-                  onClick={() => handleExtract(key)}
-                  disabled={isExtracting}
-                  style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 10px", opacity: isExtracting ? 0.6 : 1 }}
-                >
-                  {isExtracting ? "Extracting…" : count > 0 ? "Re-extract" : "Extract"}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── Per-entity sections ── */}
       {ENTITY_TYPES.map(({ key, label }) => (
         <EntitySection
           key={key}
