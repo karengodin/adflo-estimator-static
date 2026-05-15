@@ -19,7 +19,9 @@ type ExtractionItem = {
   created_at: string;
 };
 
-type ItemHistory = {
+type MigrationRun = {
+  entity_type: string;
+  item_id: string;
   status: string;
   snippet: string;
   run_at: string;
@@ -36,6 +38,16 @@ type MigrateResult = {
   isRetry: boolean;
 };
 
+type QueueItem = {
+  taskFormId: string;
+  taskFormName: string;
+  currentWorkflow: string;
+  targetWorkflowId: string;
+  targetWorkflowName: string;
+  status: "pending" | "running" | "done" | "failed";
+  resultSnippet?: string;
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ENTITY_TYPES = [
@@ -47,577 +59,483 @@ const ENTITY_TYPES = [
   { key: "task",        label: "Task Forms" },
 ] as const;
 
-const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  success:                { label: "Success",       bg: "rgba(34,197,94,0.12)",   color: "#16a34a" },
-  partial_success:        { label: "Partial",        bg: "rgba(251,191,36,0.12)",  color: "#b45309" },
-  error:                  { label: "Error",          bg: "rgba(239,68,68,0.12)",   color: "#dc2626" },
-  skipped:                { label: "Skipped",        bg: "rgba(148,163,184,0.12)", color: "#64748b" },
-  needs_parent_selection: { label: "Needs Parent",  bg: "rgba(47,111,237,0.10)",  color: "#2f6fed" },
-};
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function isNoOpError(snippet: string) {
-  return snippet.includes("NO-OP") || snippet.toLowerCase().includes("0 items added");
+function humanStatus(status: string, snippet: string) {
+  const isNoOp = snippet.includes("NO-OP") || snippet.toLowerCase().includes("0 items added");
+  switch (status) {
+    case "success": {
+      const m = snippet.match(/added (\d+) items?/i);
+      return { label: "Succeeded", description: m ? `Succeeded — ${m[1]} item${m[1] === "1" ? "" : "s"} added` : "Succeeded", color: "#16a34a", bg: "rgba(34,197,94,0.12)" };
+    }
+    case "partial_success":
+      return { label: "Partial", description: "Partial — unsupported field types (acceptable)", color: "#b45309", bg: "rgba(251,191,36,0.12)" };
+    case "error":
+      if (isNoOp) return { label: "Dep. failure", description: "Dependency failure — will retry automatically", color: "#7c3aed", bg: "rgba(124,58,237,0.10)" };
+      return { label: "Failed", description: `Failed — ${snippet.replace(/^ERRORS?:\s*/i, "").slice(0, 120)}`, color: "#dc2626", bg: "rgba(239,68,68,0.12)" };
+    case "skipped":
+      return { label: "Skipped", description: "Skipped — already succeeded", color: "#64748b", bg: "rgba(148,163,184,0.12)" };
+    case "needs_parent_selection":
+      return { label: "Needs parent", description: `Needs parent selection — ${snippet}`, color: "#2f6fed", bg: "rgba(47,111,237,0.10)" };
+    default:
+      return { label: status, description: snippet, color: "#64748b", bg: "rgba(148,163,184,0.12)" };
+  }
 }
 
 function formatDate(iso: string | null) {
   if (!iso) return "Never";
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-  });
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function resolveInput(raw: string, items: ExtractionItem[]) {
+  const tokens = raw.split(",").map((t) => t.trim()).filter(Boolean);
+  const resolved: ExtractionItem[] = [];
+  const unmatched: string[] = [];
+  for (const token of tokens) {
+    const match = items.find((i) => i.item_id === token) ?? items.find((i) => i.item_name.toLowerCase() === token.toLowerCase());
+    if (match) resolved.push(match);
+    else unmatched.push(token);
+  }
+  return { resolved, unmatched };
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MigrationPage() {
-  // ── Instance state ─────────────────────────────────────────────────────────
   const [instances, setInstances] = useState<Instance[]>([]);
   const [instancesLoading, setInstancesLoading] = useState(true);
-  const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
+  const [selectedInstanceId, setSelectedInstanceId] = useState("");
+  const [activeTab, setActiveTab] = useState<"classic" | "reassignment">("classic");
 
-  // ── Data state ─────────────────────────────────────────────────────────────
-  // Extractions: keyed by entityType → items
   const [extractions, setExtractions] = useState<Record<string, ExtractionItem[]>>({});
   const [extractionsLoading, setExtractionsLoading] = useState(false);
-  // Latest migration run per item: entityType → itemId → history
-  const [history, setHistory] = useState<Record<string, Record<string, ItemHistory>>>({});
-
-  // ── Interaction state ──────────────────────────────────────────────────────
-  const [selected, setSelected] = useState<Record<string, Set<string>>>({});
-  const [extracting, setExtracting] = useState<Record<string, boolean>>({});
-  const [migrating, setMigrating] = useState<Record<string, boolean>>({});
-  const [results, setResults] = useState<Record<string, MigrateResult[]>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
-  // ── Load instances on mount ────────────────────────────────────────────────
+  // Latest run per (entityType, itemId) — for checklist badges
+  const [latestRun, setLatestRun] = useState<Record<string, Record<string, MigrationRun>>>({});
+  // All runs per (entityType, itemId) — for expandable history
+  const [allRuns, setAllRuns] = useState<Record<string, Record<string, MigrationRun[]>>>({});
 
   useEffect(() => {
     fetch("/api/tapclicks-instances")
       .then((r) => r.json())
-      .then((data) => {
-        setInstances(Array.isArray(data) ? data : []);
-        setInstancesLoading(false);
-      })
+      .then((data) => { setInstances(Array.isArray(data) ? data : []); setInstancesLoading(false); })
       .catch(() => setInstancesLoading(false));
   }, []);
 
-  // ── Load extractions + migration history when instance changes ─────────────
-
-  // showLoadingSpinner=false for background refreshes (e.g. after each extract)
-  // so the content area stays mounted and doesn't flash.
-  const loadData = useCallback(async (instanceId: string, showLoadingSpinner = true) => {
+  const loadData = useCallback(async (instanceId: string, showSpinner = true) => {
     if (!instanceId) return;
-    if (showLoadingSpinner) setExtractionsLoading(true);
+    if (showSpinner) setExtractionsLoading(true);
 
-    // Use server-side API routes so the service role key is used — the
-    // extractions and migration_runs tables have RLS policies tied to user_id,
-    // but rows inserted by the extract/migrate routes have user_id=null (no
-    // user session). Querying via the anon key returns nothing. These routes
-    // use supabaseServer (service role) which bypasses RLS.
-    const [extractionRes, historyRes] = await Promise.all([
+    const [extractionRes, runsRes] = await Promise.all([
       fetch(`/api/extractions?instanceId=${instanceId}`).then((r) => r.json()),
       fetch(`/api/migration-runs?instanceId=${instanceId}`).then((r) => r.json()),
     ]);
 
-    const extractionRows: ExtractionItem[] = Array.isArray(extractionRes) ? extractionRes : [];
+    const rows: ExtractionItem[] = Array.isArray(extractionRes) ? extractionRes : [];
     const byType: Record<string, ExtractionItem[]> = {};
-    for (const row of extractionRows) {
+    for (const row of rows) {
       if (!byType[row.entity_type]) byType[row.entity_type] = [];
       byType[row.entity_type].push(row);
     }
     setExtractions(byType);
 
-    // Latest migration run per (entity_type, item_id) — ordered DESC so first
-    // occurrence per item is the most recent
-    const historyRows: (ItemHistory & { entity_type: string; item_id: string })[] =
-      Array.isArray(historyRes) ? historyRes : [];
-    const histMap: Record<string, Record<string, ItemHistory>> = {};
-    for (const row of historyRows) {
-      if (!histMap[row.entity_type]) histMap[row.entity_type] = {};
-      if (!histMap[row.entity_type][row.item_id]) {
-        histMap[row.entity_type][row.item_id] = {
-          status: row.status ?? "",
-          snippet: row.snippet ?? "",
-          run_at: row.run_at,
-        };
-      }
+    const runs: MigrationRun[] = Array.isArray(runsRes) ? runsRes : [];
+    // runs are ordered DESC by run_at from the API
+    const allMap: Record<string, Record<string, MigrationRun[]>> = {};
+    const latestMap: Record<string, Record<string, MigrationRun>> = {};
+    for (const run of runs) {
+      if (!allMap[run.entity_type]) allMap[run.entity_type] = {};
+      if (!allMap[run.entity_type][run.item_id]) allMap[run.entity_type][run.item_id] = [];
+      allMap[run.entity_type][run.item_id].push(run);
+      if (!latestMap[run.entity_type]) latestMap[run.entity_type] = {};
+      if (!latestMap[run.entity_type][run.item_id]) latestMap[run.entity_type][run.item_id] = run;
     }
-    setHistory(histMap);
+    setAllRuns(allMap);
+    setLatestRun(latestMap);
     setExtractionsLoading(false);
   }, []);
 
   useEffect(() => {
     if (selectedInstanceId) {
-      setResults({});
-      setSelected({});
-      setExpanded({});
+      setExtractions({});
+      setLatestRun({});
+      setAllRuns({});
       loadData(selectedInstanceId);
     }
   }, [selectedInstanceId, loadData]);
 
-  // ── Extract one entity type ────────────────────────────────────────────────
-
-  const handleExtract = async (entityType: string) => {
-    if (!selectedInstanceId) return;
-    setExtracting((prev) => ({ ...prev, [entityType]: true }));
-    try {
-      await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instanceId: selectedInstanceId, entityType }),
-      });
-      // Pass false so loadData updates extractions/history in the background
-      // without toggling extractionsLoading, which would unmount the content area.
-      await loadData(selectedInstanceId, false);
-    } finally {
-      setExtracting((prev) => ({ ...prev, [entityType]: false }));
-    }
-  };
-
-  // ── Extract all entity types sequentially ──────────────────────────────────
-
-  const handleExtractAll = async () => {
-    console.log("[adfloMigrate] Extract All started", { instanceId: selectedInstanceId });
-    for (const { key } of ENTITY_TYPES) {
-      console.log("[adfloMigrate] Extracting:", key);
-      await handleExtract(key);
-      console.log("[adfloMigrate] Done extracting:", key, "→ items:", extractions[key]?.length ?? 0);
-    }
-    console.log("[adfloMigrate] Extract All complete");
-  };
-
-  const isAnyExtracting = Object.values(extracting).some(Boolean);
-
-  // ── Selection helpers ──────────────────────────────────────────────────────
-
-  const toggleItem = (entityType: string, itemId: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev[entityType] ?? []);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return { ...prev, [entityType]: next };
-    });
-  };
-
-  const selectAllPending = (entityType: string) => {
-    const items = extractions[entityType] ?? [];
-    const typeHistory = history[entityType] ?? {};
-    const pendingIds = items
-      .filter((item) => typeHistory[item.item_id]?.status !== "success")
-      .map((item) => item.item_id);
-    setSelected((prev) => ({ ...prev, [entityType]: new Set(pendingIds) }));
-  };
-
-  const clearSelection = (entityType: string) => {
-    setSelected((prev) => ({ ...prev, [entityType]: new Set<string>() }));
-  };
-
-  // ── Migrate selected or specific items ────────────────────────────────────
-
-  const handleMigrate = async (entityType: string, itemIds?: string[]) => {
-    if (!selectedInstanceId) return;
-    const items = extractions[entityType] ?? [];
-    const ids = itemIds ?? [...(selected[entityType] ?? [])];
-    if (ids.length === 0) return;
-
-    const payload = ids
-      .map((id) => items.find((i) => i.item_id === id))
-      .filter(Boolean)
-      .map((item) => ({
-        id: item!.item_id,
-        name: item!.item_name,
-        referenceTable: item!.reference_table,
-      }));
-
-    setMigrating((prev) => ({ ...prev, [entityType]: true }));
-    try {
-      const res = await fetch("/api/migrate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instanceId: selectedInstanceId,
-          entityType,
-          items: payload,
-          pendingOnly: false,
-        }),
-      });
-      const data = await res.json();
-      setResults((prev) => ({ ...prev, [entityType]: data.results ?? [] }));
-      // Refresh history so status badges on items reflect the new run
-      await loadData(selectedInstanceId);
-    } finally {
-      setMigrating((prev) => ({ ...prev, [entityType]: false }));
-    }
-  };
-
-  const handleRetryFailures = (entityType: string) => {
-    const current = results[entityType] ?? [];
-    // Latest result per id (retry overrides original)
-    const latestById: Record<string, MigrateResult> = {};
-    for (const r of current) latestById[r.id] = r;
-    const retryIds = Object.values(latestById)
-      .filter((r) => r.status === "error" && isNoOpError(r.snippet))
-      .map((r) => r.id);
-    if (retryIds.length > 0) handleMigrate(entityType, retryIds);
-  };
-
-  // ── Computed helpers ───────────────────────────────────────────────────────
-
-  const getLastExtracted = (entityType: string): string | null => {
-    const items = extractions[entityType];
-    if (!items?.length) return null;
-    return items.reduce<string | null>(
-      (latest, item) => (!latest || item.created_at > latest ? item.created_at : latest),
-      null
-    );
-  };
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────────────────
-
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto" }}>
-
-      {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div style={{
-        marginBottom: 24,
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: 20,
-        flexWrap: "wrap",
-      }}>
+    <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px" }}>
+      {/* ── Header ── */}
+      <div style={{ marginBottom: 24, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#0f1623" }}>
-            adfloMigrate
-          </h1>
-          <p style={{ margin: "6px 0 0", fontSize: 14, color: "#627286" }}>
-            Classic → Adflo migration
-          </p>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#0f1623" }}>adfloMigrate</h1>
+          <p style={{ margin: "6px 0 0", fontSize: 14, color: "#627286" }}>Classic → Adflo migration</p>
         </div>
-
-        {/* Instance selector */}
         <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 280 }}>
           <label style={labelStyle}>Instance</label>
           {instancesLoading ? (
             <span style={{ fontSize: 13, color: "#8a9bb0", padding: "10px 0" }}>Loading…</span>
           ) : instances.length === 0 ? (
-            <span style={{ fontSize: 13, color: "#dc2626" }}>
-              No instances found. Add one on the Instances page.
-            </span>
+            <span style={{ fontSize: 13, color: "#dc2626" }}>No instances found. Add one on the Instances page.</span>
           ) : (
-            <select
-              value={selectedInstanceId}
-              onChange={(e) => setSelectedInstanceId(e.target.value)}
-              style={selectStyle}
-            >
+            <select value={selectedInstanceId} onChange={(e) => setSelectedInstanceId(e.target.value)} style={selectStyle}>
               <option value="">Select an instance…</option>
               {instances.map((inst) => (
-                <option key={inst.id} value={inst.id}>
-                  {inst.name}
-                </option>
+                <option key={inst.id} value={inst.id}>{inst.name}</option>
               ))}
             </select>
           )}
         </div>
       </div>
 
-      {/* ── Empty state ────────────────────────────────────────────────────── */}
+      {/* ── Tabs ── */}
+      <div style={{ display: "flex", borderBottom: "1px solid #dde5ef", marginBottom: 20 }}>
+        {(["classic", "reassignment"] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            style={{
+              padding: "9px 20px",
+              border: "none",
+              background: "transparent",
+              fontWeight: 600,
+              fontSize: 13.5,
+              cursor: "pointer",
+              color: activeTab === tab ? "#2f6fed" : "#627286",
+              borderBottom: activeTab === tab ? "2px solid #2f6fed" : "2px solid transparent",
+              marginBottom: -1,
+              fontFamily: "inherit",
+            }}
+          >
+            {tab === "classic" ? "Classic → Adflo" : "Adflo Reassignment"}
+          </button>
+        ))}
+      </div>
+
       {!selectedInstanceId && (
-        <div style={{
-          background: "#fff",
-          border: "1px solid #dde5ef",
-          borderRadius: 16,
-          padding: "56px 32px",
-          textAlign: "center",
-          color: "#8a9bb0",
-          fontSize: 14,
-        }}>
+        <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: "56px 32px", textAlign: "center", color: "#8a9bb0", fontSize: 14 }}>
           Select an instance above to begin.
         </div>
       )}
 
       {selectedInstanceId && extractionsLoading && (
-        <div style={{ textAlign: "center", padding: "56px 0", color: "#8a9bb0", fontSize: 14 }}>
-          Loading…
-        </div>
+        <div style={{ textAlign: "center", padding: "56px 0", color: "#8a9bb0", fontSize: 14 }}>Loading…</div>
       )}
 
-      {/* ── Main content (instance selected + data loaded) ─────────────────── */}
-      {selectedInstanceId && !extractionsLoading && (
-        <>
-          {/* ── Extraction Status Card ───────────────────────────────────── */}
-          <div style={{
-            background: "#fff",
-            border: "1px solid #dde5ef",
-            borderRadius: 16,
-            marginBottom: 20,
-            overflow: "hidden",
-          }}>
-            <div style={{
-              padding: "14px 20px",
-              borderBottom: "1px solid #dde5ef",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#0f1623" }}>
-                Extraction Status
-              </div>
-              <button
-                onClick={handleExtractAll}
-                disabled={isAnyExtracting}
-                style={{
-                  ...primaryBtnStyle,
-                  fontSize: 12,
-                  padding: "7px 14px",
-                  opacity: isAnyExtracting ? 0.6 : 1,
-                }}
-              >
-                {isAnyExtracting ? "Extracting…" : "Extract All"}
-              </button>
-            </div>
+      {selectedInstanceId && !extractionsLoading && activeTab === "classic" && (
+        <ClassicTab
+          instanceId={selectedInstanceId}
+          extractions={extractions}
+          latestRun={latestRun}
+          allRuns={allRuns}
+          onRefresh={(silent) => loadData(selectedInstanceId, !silent)}
+        />
+      )}
 
-            {/* 3-column grid of entity types */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)" }}>
-              {ENTITY_TYPES.map(({ key, label }, i) => {
-                const count = extractions[key]?.length ?? 0;
-                const lastDate = getLastExtracted(key);
-                const isExtracting = !!extracting[key];
-                const borderRight = (i + 1) % 3 !== 0;
-                const borderBottom = i < 3;
-                return (
-                  <div
-                    key={key}
-                    style={{
-                      padding: "14px 18px",
-                      borderRight: borderRight ? "1px solid #eef3f8" : "none",
-                      borderBottom: borderBottom ? "1px solid #eef3f8" : "none",
-                    }}
-                  >
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#627286", marginBottom: 4 }}>
-                      {label}
-                    </div>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: "#0f1623", lineHeight: 1, marginBottom: 3 }}>
-                      {count > 0 ? count : "—"}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>
-                      {lastDate ? `Extracted ${formatDate(lastDate)}` : "Not extracted"}
-                    </div>
-                    <button
-                      onClick={() => handleExtract(key)}
-                      disabled={isExtracting}
-                      style={{
-                        ...ghostBtnStyle,
-                        fontSize: 11,
-                        padding: "4px 10px",
-                        opacity: isExtracting ? 0.6 : 1,
-                      }}
-                    >
-                      {isExtracting ? "Extracting…" : count > 0 ? "Re-extract" : "Extract"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+      {selectedInstanceId && !extractionsLoading && activeTab === "reassignment" && (
+        <ReassignmentTab
+          instanceId={selectedInstanceId}
+          extractions={extractions}
+        />
+      )}
+    </div>
+  );
+}
 
-          {/* ── Migration Checklist ──────────────────────────────────────── */}
-          {ENTITY_TYPES.map(({ key, label }) => {
-            const items = extractions[key] ?? [];
-            const typeHistory = history[key] ?? {};
-            const typeResults = results[key] ?? [];
-            const selectedSet = selected[key] ?? new Set<string>();
-            const isMigrating = !!migrating[key];
-            const isExpanded = !!expanded[key];
-            const hasResults = typeResults.length > 0;
+// ─── Tab 1: Classic → Adflo ───────────────────────────────────────────────────
 
-            const successCount = items.filter(
-              (item) => typeHistory[item.item_id]?.status === "success"
-            ).length;
-            const pendingCount = items.length - successCount;
+function ClassicTab({
+  instanceId,
+  extractions,
+  latestRun,
+  allRuns,
+  onRefresh,
+}: {
+  instanceId: string;
+  extractions: Record<string, ExtractionItem[]>;
+  latestRun: Record<string, Record<string, MigrationRun>>;
+  allRuns: Record<string, Record<string, MigrationRun[]>>;
+  onRefresh: (silent: boolean) => void;
+}) {
+  const [extracting, setExtracting] = useState<Record<string, boolean>>({});
 
+  const handleExtract = async (entityType: string) => {
+    setExtracting((p) => ({ ...p, [entityType]: true }));
+    try {
+      await fetch("/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instanceId, entityType }),
+      });
+      onRefresh(true);
+    } finally {
+      setExtracting((p) => ({ ...p, [entityType]: false }));
+    }
+  };
+
+  const isAnyExtracting = Object.values(extracting).some(Boolean);
+
+  const getLastExtracted = (entityType: string) =>
+    (extractions[entityType] ?? []).reduce<string | null>(
+      (latest, item) => (!latest || item.created_at > latest ? item.created_at : latest),
+      null
+    );
+
+  return (
+    <>
+      {/* ── Extraction status card ── */}
+      <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, marginBottom: 20, overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #dde5ef", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#0f1623" }}>Extraction Status</div>
+          <button
+            onClick={async () => { for (const { key } of ENTITY_TYPES) await handleExtract(key); }}
+            disabled={isAnyExtracting}
+            style={{ ...primaryBtnStyle, fontSize: 12, padding: "7px 14px", opacity: isAnyExtracting ? 0.6 : 1 }}
+          >
+            {isAnyExtracting ? "Extracting…" : "Extract All"}
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)" }}>
+          {ENTITY_TYPES.map(({ key, label }, i) => {
+            const count = extractions[key]?.length ?? 0;
+            const isExtracting = !!extracting[key];
             return (
-              <div
-                key={key}
-                style={{
-                  background: "#fff",
-                  border: "1px solid #dde5ef",
-                  borderRadius: 16,
-                  marginBottom: 12,
-                  overflow: "hidden",
-                }}
-              >
-                {/* Section header row */}
-                <div
-                  style={{
-                    padding: "13px 20px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    cursor: items.length > 0 ? "pointer" : "default",
-                    borderBottom: isExpanded || hasResults ? "1px solid #eef3f8" : "none",
-                    userSelect: "none",
-                  }}
-                  onClick={() =>
-                    items.length > 0 &&
-                    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }))
-                  }
-                >
-                  <span style={{ fontSize: 11, color: "#94a3b8", width: 14, flexShrink: 0 }}>
-                    {items.length > 0 ? (isExpanded ? "▼" : "▶") : "–"}
-                  </span>
-
-                  <span style={{ fontSize: 14, fontWeight: 700, color: "#0f1623", flex: 1 }}>
-                    {label}
-                  </span>
-
-                  {/* Status chips */}
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    {items.length === 0 && (
-                      <span style={{ fontSize: 12, color: "#94a3b8" }}>Not extracted</span>
-                    )}
-                    {successCount > 0 && (
-                      <StatusChip value={successCount} label="done" color="#16a34a" bg="rgba(34,197,94,0.1)" />
-                    )}
-                    {pendingCount > 0 && items.length > 0 && (
-                      <StatusChip value={pendingCount} label="pending" color="#627286" bg="rgba(148,163,184,0.1)" />
-                    )}
-                  </div>
-
-                  {/* Migrate button */}
-                  {items.length > 0 && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleMigrate(key);
-                      }}
-                      disabled={isMigrating || selectedSet.size === 0}
-                      style={{
-                        ...primaryBtnStyle,
-                        fontSize: 12,
-                        padding: "6px 14px",
-                        opacity: isMigrating || selectedSet.size === 0 ? 0.45 : 1,
-                      }}
-                    >
-                      {isMigrating
-                        ? "Migrating…"
-                        : selectedSet.size > 0
-                        ? `Migrate (${selectedSet.size})`
-                        : "Migrate Selected"}
-                    </button>
-                  )}
+              <div key={key} style={{
+                padding: "14px 18px",
+                borderRight: (i + 1) % 3 !== 0 ? "1px solid #eef3f8" : "none",
+                borderBottom: i < 3 ? "1px solid #eef3f8" : "none",
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#627286", marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: "#0f1623", lineHeight: 1, marginBottom: 3 }}>
+                  {count > 0 ? count : "—"}
                 </div>
-
-                {/* Item list (expanded) */}
-                {isExpanded && items.length > 0 && (
-                  <>
-                    {/* Selection toolbar */}
-                    <div style={{
-                      padding: "7px 20px",
-                      background: "#f8fafc",
-                      borderBottom: "1px solid #eef3f8",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}>
-                      <button
-                        onClick={() => selectAllPending(key)}
-                        style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}
-                      >
-                        Select all pending
-                      </button>
-                      <button
-                        onClick={() => clearSelection(key)}
-                        style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}
-                      >
-                        Clear
-                      </button>
-                      {selectedSet.size > 0 && (
-                        <span style={{ fontSize: 12, color: "#627286" }}>
-                          {selectedSet.size} selected
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Scrollable item list */}
-                    <div style={{ maxHeight: 300, overflowY: "auto" }}>
-                      {items.map((item, i) => {
-                        const itemHist = typeHistory[item.item_id];
-                        const isChecked = selectedSet.has(item.item_id);
-                        const isLast = i === items.length - 1;
-                        const statusCfg = itemHist ? (STATUS_CONFIG[itemHist.status] ?? null) : null;
-                        return (
-                          <div
-                            key={item.item_id}
-                            onClick={() => toggleItem(key, item.item_id)}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 10,
-                              padding: "8px 20px",
-                              borderBottom: isLast ? "none" : "1px solid #f1f5f9",
-                              background: isChecked ? "rgba(47,111,237,0.03)" : "transparent",
-                              cursor: "pointer",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleItem(key, item.item_id)}
-                              onClick={(e) => e.stopPropagation()}
-                              style={{ accentColor: "#2f6fed", flexShrink: 0 }}
-                            />
-                            <span style={{
-                              flex: 1,
-                              fontSize: 13,
-                              color: "#0f1623",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}>
-                              {item.item_name || item.item_id}
-                            </span>
-                            <span style={{
-                              fontSize: 11,
-                              color: "#94a3b8",
-                              fontFamily: "'DM Mono', monospace",
-                              flexShrink: 0,
-                            }}>
-                              #{item.item_id}
-                            </span>
-                            {statusCfg && (
-                              <span style={{
-                                fontSize: 11,
-                                fontWeight: 600,
-                                padding: "2px 8px",
-                                borderRadius: 999,
-                                background: statusCfg.bg,
-                                color: statusCfg.color,
-                                flexShrink: 0,
-                              }}>
-                                {statusCfg.label}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </>
-                )}
-
-                {/* Results panel (shown after a migration run on this type) */}
-                {hasResults && (
-                  <ResultsPanel
-                    results={typeResults}
-                    onRetry={() => handleRetryFailures(key)}
-                    isRetrying={isMigrating}
-                  />
-                )}
+                <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>
+                  {getLastExtracted(key) ? `Extracted ${formatDate(getLastExtracted(key))}` : "Not extracted"}
+                </div>
+                <button
+                  onClick={() => handleExtract(key)}
+                  disabled={isExtracting}
+                  style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 10px", opacity: isExtracting ? 0.6 : 1 }}
+                >
+                  {isExtracting ? "Extracting…" : count > 0 ? "Re-extract" : "Extract"}
+                </button>
               </div>
             );
           })}
+        </div>
+      </div>
+
+      {/* ── Per-entity sections ── */}
+      {ENTITY_TYPES.map(({ key, label }) => (
+        <EntitySection
+          key={key}
+          entityType={key}
+          label={label}
+          instanceId={instanceId}
+          items={extractions[key] ?? []}
+          latestRun={latestRun[key] ?? {}}
+          allRuns={allRuns[key] ?? {}}
+          onMigrated={() => onRefresh(true)}
+        />
+      ))}
+    </>
+  );
+}
+
+// ─── Entity Section ────────────────────────────────────────────────────────────
+
+function EntitySection({
+  entityType,
+  label,
+  instanceId,
+  items,
+  latestRun,
+  allRuns,
+  onMigrated,
+}: {
+  entityType: string;
+  label: string;
+  instanceId: string;
+  items: ExtractionItem[];
+  latestRun: Record<string, MigrationRun>;
+  allRuns: Record<string, MigrationRun[]>;
+  onMigrated: () => void;
+}) {
+  const [mode, setMode] = useState<"pick" | "paste">("pick");
+  const [pasteInput, setPasteInput] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [migrating, setMigrating] = useState(false);
+  const [results, setResults] = useState<MigrateResult[]>([]);
+
+  const pasteResolved = mode === "paste" && pasteInput.trim() ? resolveInput(pasteInput, items) : null;
+
+  const toggleItem = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const selectAllPending = () =>
+    setSelected(new Set(items.filter((i) => latestRun[i.item_id]?.status !== "success").map((i) => i.item_id)));
+
+  const getItemsToMigrate = (): ExtractionItem[] =>
+    mode === "paste" ? (pasteResolved?.resolved ?? []) : items.filter((i) => selected.has(i.item_id));
+
+  const runMigrate = async (toMigrate: ExtractionItem[], appendResults = false) => {
+    if (!toMigrate.length) return;
+    setMigrating(true);
+    try {
+      const res = await fetch("/api/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instanceId,
+          entityType,
+          items: toMigrate.map((i) => ({ id: i.item_id, name: i.item_name, referenceTable: i.reference_table })),
+          pendingOnly: false,
+        }),
+      });
+      const data = await res.json();
+      const newResults: MigrateResult[] = data.results ?? [];
+      setResults((prev) => appendResults ? [...prev, ...newResults] : newResults);
+      onMigrated();
+    } finally {
+      setMigrating(false);
+    }
+  };
+
+  const canMigrate = mode === "paste" ? (pasteResolved?.resolved.length ?? 0) > 0 : selected.size > 0;
+  const migrateCount = mode === "paste" ? (pasteResolved?.resolved.length ?? 0) : selected.size;
+  const successCount = items.filter((i) => latestRun[i.item_id]?.status === "success").length;
+  const pendingCount = items.length - successCount;
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, marginBottom: 12, overflow: "hidden" }}>
+      {/* Section header */}
+      <div style={{ padding: "14px 20px", borderBottom: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: "#0f1623", flex: 1 }}>{label}</span>
+
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {items.length === 0 && <span style={{ fontSize: 12, color: "#94a3b8" }}>Not extracted</span>}
+          {successCount > 0 && <Chip value={successCount} label="done" color="#16a34a" bg="rgba(34,197,94,0.1)" />}
+          {pendingCount > 0 && items.length > 0 && <Chip value={pendingCount} label="pending" color="#627286" bg="rgba(148,163,184,0.1)" />}
+        </div>
+
+        {items.length > 0 && (
+          <div style={{ display: "flex", borderRadius: 8, border: "1px solid #dde5ef", overflow: "hidden" }}>
+            {(["pick", "paste"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                style={{
+                  padding: "5px 12px", border: "none",
+                  background: mode === m ? "#2f6fed" : "transparent",
+                  color: mode === m ? "#fff" : "#627286",
+                  fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                {m === "pick" ? "Pick from Xtract" : "Paste IDs/Names"}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <button
+          onClick={() => runMigrate(getItemsToMigrate())}
+          disabled={migrating || !canMigrate}
+          style={{ ...primaryBtnStyle, fontSize: 12, padding: "6px 14px", opacity: migrating || !canMigrate ? 0.45 : 1 }}
+        >
+          {migrating ? "Migrating…" : canMigrate ? `Migrate (${migrateCount})` : "Migrate Selected"}
+        </button>
+      </div>
+
+      {/* Paste mode */}
+      {mode === "paste" && (
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #eef3f8" }}>
+          <textarea
+            style={{ ...inputStyle, minHeight: 72, fontFamily: "monospace", fontSize: 12, resize: "vertical" }}
+            placeholder="Paste comma-separated IDs or names…"
+            value={pasteInput}
+            onChange={(e) => setPasteInput(e.target.value)}
+          />
+          {pasteResolved && (
+            <div style={{ marginTop: 8, fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+              {pasteResolved.resolved.length > 0 && (
+                <span style={{ color: "#16a34a" }}>
+                  ✓ {pasteResolved.resolved.length} resolved: {pasteResolved.resolved.map((i) => i.item_name || i.item_id).join(", ")}
+                </span>
+              )}
+              {pasteResolved.unmatched.length > 0 && (
+                <span style={{ color: "#dc2626" }}>Not found: {pasteResolved.unmatched.join(", ")}</span>
+              )}
+              {pasteResolved.resolved.length === 0 && pasteResolved.unmatched.length === 0 && items.length === 0 && (
+                <span style={{ color: "#94a3b8" }}>Extract this entity type first to resolve names/IDs.</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pick mode */}
+      {mode === "pick" && items.length > 0 && (
+        <>
+          <div style={{ padding: "7px 20px", background: "#f8fafc", borderBottom: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 8 }}>
+            <button onClick={selectAllPending} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Select all pending</button>
+            <button onClick={() => setSelected(new Set())} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Clear</button>
+            {selected.size > 0 && <span style={{ fontSize: 12, color: "#627286" }}>{selected.size} selected</span>}
+          </div>
+          <div style={{ maxHeight: 300, overflowY: "auto" }}>
+            {items.map((item, i) => {
+              const run = latestRun[item.item_id];
+              const isChecked = selected.has(item.item_id);
+              const statusInfo = run ? humanStatus(run.status, run.snippet) : null;
+              return (
+                <div
+                  key={item.item_id}
+                  onClick={() => toggleItem(item.item_id)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "8px 20px",
+                    borderBottom: i < items.length - 1 ? "1px solid #f1f5f9" : "none",
+                    background: isChecked ? "rgba(47,111,237,0.03)" : "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox" checked={isChecked}
+                    onChange={() => toggleItem(item.item_id)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ accentColor: "#2f6fed", flexShrink: 0 }}
+                  />
+                  <span style={{ flex: 1, fontSize: 13, color: "#0f1623", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {item.item_name || item.item_id}
+                  </span>
+                  <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", flexShrink: 0 }}>
+                    #{item.item_id}
+                  </span>
+                  {statusInfo && (
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: statusInfo.bg, color: statusInfo.color, flexShrink: 0 }}>
+                      {statusInfo.label}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </>
+      )}
+
+      {/* Results */}
+      {results.length > 0 && (
+        <ResultsPanel
+          results={results}
+          allRuns={allRuns}
+          onRetry={(ids) => {
+            const toRetry = items.filter((i) => ids.includes(i.item_id));
+            runMigrate(toRetry, true);
+          }}
+          isRetrying={migrating}
+        />
       )}
     </div>
   );
@@ -627,144 +545,119 @@ export default function MigrationPage() {
 
 function ResultsPanel({
   results,
+  allRuns,
   onRetry,
   isRetrying,
 }: {
   results: MigrateResult[];
-  onRetry: () => void;
+  allRuns: Record<string, MigrationRun[]>;
+  onRetry: (ids: string[]) => void;
   isRetrying: boolean;
 }) {
-  // Overlay retry results on their originals so the list shows the latest
-  // status per item. Both original and retry rows are in the results array
-  // (isRetry distinguishes them); we display the latest per id.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
   const latestById: Record<string, MigrateResult> = {};
-  for (const r of results) latestById[r.id] = r; // later items (retries) win
+  for (const r of results) latestById[r.id] = r;
   const latest = Object.values(latestById);
 
-  const succeeded = latest.filter((r) => r.status === "success").length;
-  const partial   = latest.filter((r) => r.status === "partial_success").length;
-  const failed    = latest.filter((r) => r.status === "error").length;
-  const skipped   = latest.filter((r) => r.status === "skipped").length;
+  const counts = {
+    succeeded: latest.filter((r) => r.status === "success").length,
+    partial:   latest.filter((r) => r.status === "partial_success").length,
+    failed:    latest.filter((r) => r.status === "error").length,
+    skipped:   latest.filter((r) => r.status === "skipped").length,
+  };
 
-  const noOpErrors  = latest.filter((r) => r.status === "error" && isNoOpError(r.snippet));
-  const realErrors  = latest.filter((r) => r.status === "error" && !isNoOpError(r.snippet));
+  const isNoOp = (r: MigrateResult) => r.snippet.includes("NO-OP") || r.snippet.toLowerCase().includes("0 items added");
+  const depFailures = latest.filter((r) => r.status === "error" && isNoOp(r));
+  const realErrors  = latest.filter((r) => r.status === "error" && !isNoOp(r));
+
+  const toggleExpand = (id: string) =>
+    setExpandedIds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
   return (
     <div style={{ borderTop: "1px solid #eef3f8" }}>
-
       {/* Summary bar */}
-      <div style={{
-        padding: "10px 20px",
-        background: "#f8fafc",
-        borderBottom: "1px solid #eef3f8",
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        flexWrap: "wrap",
-      }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>
-          RUN RESULTS
-        </span>
-        {succeeded > 0  && <StatusChip value={succeeded} label="succeeded"  color="#16a34a" bg="rgba(34,197,94,0.1)"   />}
-        {partial > 0    && <StatusChip value={partial}   label="partial"    color="#b45309" bg="rgba(251,191,36,0.1)"  />}
-        {failed > 0     && <StatusChip value={failed}    label="failed"     color="#dc2626" bg="rgba(239,68,68,0.1)"   />}
-        {skipped > 0    && <StatusChip value={skipped}   label="skipped"    color="#64748b" bg="rgba(148,163,184,0.1)" />}
-
-        {noOpErrors.length > 0 && (
+      <div style={{ padding: "10px 20px", background: "#f8fafc", borderBottom: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>RUN RESULTS</span>
+        {counts.succeeded > 0 && <Chip value={counts.succeeded} label="succeeded" color="#16a34a" bg="rgba(34,197,94,0.1)" />}
+        {counts.partial > 0   && <Chip value={counts.partial}   label="partial"   color="#b45309" bg="rgba(251,191,36,0.1)" />}
+        {counts.failed > 0    && <Chip value={counts.failed}    label="failed"    color="#dc2626" bg="rgba(239,68,68,0.1)" />}
+        {counts.skipped > 0   && <Chip value={counts.skipped}   label="skipped"   color="#64748b" bg="rgba(148,163,184,0.1)" />}
+        {depFailures.length > 0 && (
           <button
-            onClick={onRetry}
+            onClick={() => onRetry(depFailures.map((r) => r.id))}
             disabled={isRetrying}
-            style={{
-              ...ghostBtnStyle,
-              marginLeft: "auto",
-              fontSize: 11,
-              padding: "4px 12px",
-              color: "#b45309",
-              borderColor: "#fde68a",
-              opacity: isRetrying ? 0.6 : 1,
-            }}
+            style={{ ...ghostBtnStyle, marginLeft: "auto", fontSize: 11, padding: "4px 12px", color: "#7c3aed", borderColor: "#e9d5ff", opacity: isRetrying ? 0.6 : 1 }}
           >
-            {isRetrying
-              ? "Retrying…"
-              : `Retry ${noOpErrors.length} dependency ${noOpErrors.length === 1 ? "failure" : "failures"}`}
+            {isRetrying ? "Retrying…" : `Retry ${depFailures.length} dep. ${depFailures.length === 1 ? "failure" : "failures"}`}
           </button>
         )}
       </div>
 
-      {/* Per-item result rows */}
-      <div style={{ maxHeight: 260, overflowY: "auto" }}>
+      {/* Per-item rows */}
+      <div style={{ maxHeight: 300, overflowY: "auto" }}>
         {latest.map((r, i) => {
-          const cfg = STATUS_CONFIG[r.status] ?? { label: r.status, bg: "rgba(148,163,184,0.12)", color: "#64748b" };
-          const isLast = i === latest.length - 1;
+          const info = humanStatus(r.status, r.snippet);
+          const isExpanded = expandedIds.has(r.id);
+          const itemHistory = allRuns[r.id] ?? [];
+          const hasHistory = itemHistory.length > 0;
           return (
-            <div
-              key={r.id}
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 10,
-                padding: "9px 20px",
-                borderBottom: isLast ? "none" : "1px solid #f1f5f9",
-              }}
-            >
-              <span style={{
-                fontSize: 11,
-                fontWeight: 600,
-                padding: "2px 8px",
-                borderRadius: 999,
-                background: cfg.bg,
-                color: cfg.color,
-                flexShrink: 0,
-                marginTop: 1,
-              }}>
-                {cfg.label}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#0f1623", marginBottom: 2 }}>
-                  {r.name || r.id}
-                </div>
-                {r.snippet && (
-                  <div style={{
-                    fontSize: 11,
-                    color: "#8a9bb0",
-                    fontFamily: "'DM Mono', monospace",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}>
-                    {r.snippet}
-                  </div>
-                )}
-              </div>
-              {r.isRetry && (
-                <span style={{ fontSize: 10, color: "#94a3b8", flexShrink: 0, marginTop: 3 }}>
-                  retry
+            <div key={r.id} style={{ borderBottom: i < latest.length - 1 ? "1px solid #f1f5f9" : "none" }}>
+              <div
+                style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 20px", cursor: hasHistory ? "pointer" : "default" }}
+                onClick={() => hasHistory && toggleExpand(r.id)}
+              >
+                <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: info.bg, color: info.color, flexShrink: 0, marginTop: 1 }}>
+                  {info.label}
                 </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#0f1623", marginBottom: 1 }}>{r.name || r.id}</div>
+                  <div style={{ fontSize: 11, color: "#8a9bb0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {info.description}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0, marginTop: 1 }}>
+                  <span style={{ fontSize: 10, color: "#94a3b8" }}>{formatTime(r.ranAt)}</span>
+                  {hasHistory && (
+                    <span style={{ fontSize: 10, color: "#94a3b8" }}>{isExpanded ? "▲" : "▼"} history</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Expandable history */}
+              {isExpanded && itemHistory.length > 0 && (
+                <div style={{ background: "#f8fafc", borderTop: "1px solid #f1f5f9", padding: "8px 20px 8px 46px" }}>
+                  {itemHistory.map((run, hi) => {
+                    const hi2 = humanStatus(run.status, run.snippet);
+                    return (
+                      <div key={hi} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: hi < itemHistory.length - 1 ? "1px solid #eef3f8" : "none" }}>
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 999, background: hi2.bg, color: hi2.color, flexShrink: 0 }}>
+                          {hi2.label}
+                        </span>
+                        <span style={{ fontSize: 11, color: "#8a9bb0", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {hi2.description}
+                        </span>
+                        <span style={{ fontSize: 10, color: "#94a3b8", flexShrink: 0 }}>{formatDate(run.run_at)} {formatTime(run.run_at)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           );
         })}
       </div>
 
-      {/* Real errors — need human review */}
+      {/* Real errors callout */}
       {realErrors.length > 0 && (
-        <div style={{
-          margin: "12px 20px",
-          background: "rgba(239,68,68,0.05)",
-          border: "1px solid rgba(239,68,68,0.15)",
-          borderRadius: 10,
-          padding: "12px 14px",
-        }}>
+        <div style={{ margin: "12px 20px", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: 10, padding: "12px 14px" }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626", marginBottom: 8 }}>
             {realErrors.length} {realErrors.length === 1 ? "error needs" : "errors need"} human review
           </div>
           {realErrors.map((r) => (
             <div key={r.id} style={{ fontSize: 12, color: "#7f1d1d", marginBottom: 4, lineHeight: 1.5 }}>
-              <span style={{ fontWeight: 600 }}>{r.name || r.id}</span>
-              {" — "}
-              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
-                {r.snippet}
-              </span>
+              <span style={{ fontWeight: 600 }}>{r.name || r.id}</span>{" — "}
+              <span style={{ fontFamily: "monospace", fontSize: 11 }}>{r.snippet.replace(/^ERRORS?:\s*/i, "").slice(0, 200)}</span>
             </div>
           ))}
         </div>
@@ -773,22 +666,241 @@ function ResultsPanel({
   );
 }
 
-// ─── Shared sub-component ─────────────────────────────────────────────────────
+// ─── Tab 2: Adflo Reassignment ────────────────────────────────────────────────
 
-function StatusChip({
-  value, label, color, bg,
+function ReassignmentTab({
+  instanceId,
+  extractions,
 }: {
-  value: number; label: string; color: string; bg: string;
+  instanceId: string;
+  extractions: Record<string, ExtractionItem[]>;
 }) {
+  const taskForms = extractions["task"] ?? [];
+  const workflows = extractions["workflow"] ?? [];
+
+  const [taskInput, setTaskInput] = useState("");
+  const [taskResolved, setTaskResolved] = useState<ExtractionItem | null>(null);
+  const [taskNotFound, setTaskNotFound] = useState(false);
+
+  const [targetInput, setTargetInput] = useState("");
+  const [targetResolved, setTargetResolved] = useState<ExtractionItem | null>(null);
+  const [targetNotFound, setTargetNotFound] = useState(false);
+
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [running, setRunning] = useState(false);
+
+  const resolveTask = () => {
+    const q = taskInput.trim();
+    if (!q) { setTaskResolved(null); setTaskNotFound(false); return; }
+    const match = taskForms.find((i) => i.item_id === q || i.item_name.toLowerCase() === q.toLowerCase());
+    setTaskResolved(match ?? null);
+    setTaskNotFound(!match);
+  };
+
+  const resolveTarget = () => {
+    const q = targetInput.trim();
+    if (!q) { setTargetResolved(null); setTargetNotFound(false); return; }
+    const match = workflows.find((i) => i.item_id === q || i.item_name.toLowerCase() === q.toLowerCase());
+    setTargetResolved(match ?? null);
+    setTargetNotFound(!match);
+  };
+
+  const canAdd =
+    !!taskResolved &&
+    !!targetResolved &&
+    !queue.some((q) => q.taskFormId === taskResolved!.item_id && q.targetWorkflowId === targetResolved!.item_id);
+
+  const addToQueue = () => {
+    if (!taskResolved || !targetResolved) return;
+    setQueue((prev) => [
+      ...prev,
+      {
+        taskFormId: taskResolved.item_id,
+        taskFormName: taskResolved.item_name,
+        currentWorkflow: taskResolved.reference_table ?? "Unknown",
+        targetWorkflowId: targetResolved.item_id,
+        targetWorkflowName: targetResolved.item_name,
+        status: "pending",
+      },
+    ]);
+    setTaskInput(""); setTaskResolved(null); setTaskNotFound(false);
+    setTargetInput(""); setTargetResolved(null); setTargetNotFound(false);
+  };
+
+  const runAll = async () => {
+    const pending = queue.filter((q) => q.status === "pending");
+    if (!pending.length) return;
+    setRunning(true);
+
+    for (const item of pending) {
+      const key = `${item.taskFormId}::${item.targetWorkflowId}`;
+      setQueue((prev) => prev.map((q) => `${q.taskFormId}::${q.targetWorkflowId}` === key ? { ...q, status: "running" } : q));
+
+      try {
+        const res = await fetch("/api/migrate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instanceId,
+            entityType: "task_form_parent",
+            items: [{ id: item.taskFormId, name: item.taskFormName, referenceTable: item.targetWorkflowId }],
+            pendingOnly: false,
+          }),
+        });
+        const data = await res.json();
+        const result = data.results?.[0];
+        const done = result?.status === "success" || result?.status === "partial_success";
+        setQueue((prev) => prev.map((q) => `${q.taskFormId}::${q.targetWorkflowId}` === key
+          ? { ...q, status: done ? "done" : "failed", resultSnippet: result?.snippet ?? "" }
+          : q
+        ));
+      } catch (err) {
+        setQueue((prev) => prev.map((q) => `${q.taskFormId}::${q.targetWorkflowId}` === key
+          ? { ...q, status: "failed", resultSnippet: String(err) }
+          : q
+        ));
+      }
+    }
+
+    setRunning(false);
+  };
+
+  const noExtractedWarning = taskForms.length === 0 || workflows.length === 0;
+  const pendingCount = queue.filter((q) => q.status === "pending").length;
+
   return (
-    <span style={{
-      fontSize: 12,
-      fontWeight: 600,
-      padding: "2px 10px",
-      borderRadius: 999,
-      color,
-      background: bg,
-    }}>
+    <div>
+      {noExtractedWarning && (
+        <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#92400e" }}>
+          {taskForms.length === 0 && <span>Task forms not extracted. </span>}
+          {workflows.length === 0 && <span>Workflows not extracted. </span>}
+          Switch to the Classic → Adflo tab and extract these entity types first.
+        </div>
+      )}
+
+      {/* Input form */}
+      <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: 20, marginBottom: 16 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#0f1623", marginBottom: 16 }}>Add Reassignment to Queue</div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <div>
+            <label style={labelStyle}>Task Form (name or ID)</label>
+            <input
+              style={{ ...inputStyle, marginTop: 6 }}
+              placeholder="e.g. 'Ad Trafficking Task' or 42"
+              value={taskInput}
+              onChange={(e) => { setTaskInput(e.target.value); setTaskResolved(null); setTaskNotFound(false); }}
+              onBlur={resolveTask}
+            />
+            {taskResolved && (
+              <div style={{ marginTop: 5, fontSize: 12, color: "#16a34a" }}>
+                ✓ {taskResolved.item_name} (#{taskResolved.item_id})
+                {taskResolved.reference_table && ` · Parent: ${taskResolved.reference_table}`}
+              </div>
+            )}
+            {taskNotFound && (
+              <div style={{ marginTop: 5, fontSize: 12, color: "#dc2626" }}>Not found in extracted task forms</div>
+            )}
+          </div>
+
+          <div>
+            <label style={labelStyle}>Target Workflow (name or ID)</label>
+            <input
+              style={{ ...inputStyle, marginTop: 6 }}
+              placeholder="e.g. 'Display Workflow' or 7"
+              value={targetInput}
+              onChange={(e) => { setTargetInput(e.target.value); setTargetResolved(null); setTargetNotFound(false); }}
+              onBlur={resolveTarget}
+            />
+            {targetResolved && (
+              <div style={{ marginTop: 5, fontSize: 12, color: "#16a34a" }}>
+                ✓ {targetResolved.item_name} (#{targetResolved.item_id})
+              </div>
+            )}
+            {targetNotFound && (
+              <div style={{ marginTop: 5, fontSize: 12, color: "#dc2626" }}>Not found in extracted workflows</div>
+            )}
+          </div>
+        </div>
+
+        <button onClick={addToQueue} disabled={!canAdd} style={{ ...primaryBtnStyle, opacity: canAdd ? 1 : 0.45 }}>
+          Add to Queue
+        </button>
+      </div>
+
+      {/* Queue */}
+      {queue.length > 0 && (
+        <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, overflow: "hidden" }}>
+          <div style={{ padding: "14px 20px", borderBottom: "1px solid #dde5ef", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#0f1623" }}>
+              Queue{pendingCount > 0 ? ` — ${pendingCount} pending` : ""}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setQueue([])} style={{ ...ghostBtnStyle, fontSize: 12, color: "#dc2626", borderColor: "#fecaca" }}>Clear all</button>
+              <button
+                onClick={runAll}
+                disabled={running || pendingCount === 0}
+                style={{ ...primaryBtnStyle, fontSize: 12, padding: "6px 16px", opacity: running || pendingCount === 0 ? 0.5 : 1 }}
+              >
+                {running ? "Running…" : "Run All"}
+              </button>
+            </div>
+          </div>
+
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                <th style={thStyle}>Task Form</th>
+                <th style={thStyle}>Current Parent</th>
+                <th style={thStyle}>Target Workflow</th>
+                <th style={thStyle}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {queue.map((item, i) => {
+                const si = {
+                  pending: { label: "Pending",   color: "#64748b", bg: "rgba(148,163,184,0.1)" },
+                  running: { label: "Running…",  color: "#2f6fed", bg: "rgba(47,111,237,0.1)" },
+                  done:    { label: "Done",      color: "#16a34a", bg: "rgba(34,197,94,0.1)" },
+                  failed:  { label: "Failed",    color: "#dc2626", bg: "rgba(239,68,68,0.1)" },
+                }[item.status];
+                return (
+                  <tr key={i} style={{ borderTop: "1px solid #eef3f8" }}>
+                    <td style={tdStyle}>
+                      <div style={{ fontWeight: 600, color: "#0f1623", fontSize: 13 }}>{item.taskFormName}</div>
+                      <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>#{item.taskFormId}</div>
+                    </td>
+                    <td style={tdStyle}><span style={{ fontSize: 13, color: "#455468" }}>{item.currentWorkflow}</span></td>
+                    <td style={tdStyle}>
+                      <div style={{ fontWeight: 600, color: "#0f1623", fontSize: 13 }}>{item.targetWorkflowName}</div>
+                      <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>#{item.targetWorkflowId}</div>
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: si.bg, color: si.color }}>
+                        {si.label}
+                      </span>
+                      {item.resultSnippet && (
+                        <div style={{ fontSize: 11, color: "#8a9bb0", marginTop: 3, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {item.resultSnippet}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Shared components ────────────────────────────────────────────────────────
+
+function Chip({ value, label, color, bg }: { value: number; label: string; color: string; bg: string }) {
+  return (
+    <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 10px", borderRadius: 999, color, background: bg }}>
       {value} {label}
     </span>
   );
@@ -797,48 +909,39 @@ function StatusChip({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  color: "#627286",
-  textTransform: "uppercase",
-  letterSpacing: "0.06em",
+  fontSize: 11, fontWeight: 700, color: "#627286",
+  textTransform: "uppercase", letterSpacing: "0.06em", display: "block",
+};
+
+const inputStyle: React.CSSProperties = {
+  padding: "10px 14px", borderRadius: 10, border: "1px solid #dde5ef",
+  fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box", fontFamily: "inherit",
 };
 
 const selectStyle: React.CSSProperties = {
-  padding: "9px 12px",
-  borderRadius: 10,
-  border: "1px solid #dde5ef",
-  fontSize: 13.5,
-  color: "#0f1623",
-  background: "#fff",
-  outline: "none",
-  cursor: "pointer",
-  width: "100%",
-  fontFamily: "inherit",
+  padding: "9px 12px", borderRadius: 10, border: "1px solid #dde5ef",
+  fontSize: 13.5, color: "#0f1623", background: "#fff", outline: "none",
+  cursor: "pointer", width: "100%", fontFamily: "inherit",
 };
 
 const primaryBtnStyle: React.CSSProperties = {
-  padding: "9px 16px",
-  borderRadius: 10,
-  border: "none",
-  background: "#2f6fed",
-  color: "#fff",
-  fontWeight: 700,
-  fontSize: 13.5,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  whiteSpace: "nowrap",
+  padding: "9px 16px", borderRadius: 10, border: "none",
+  background: "#2f6fed", color: "#fff", fontWeight: 700,
+  fontSize: 13.5, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
 };
 
 const ghostBtnStyle: React.CSSProperties = {
-  padding: "6px 12px",
-  borderRadius: 8,
-  border: "1px solid #dde5ef",
-  background: "transparent",
-  color: "#455468",
-  fontWeight: 600,
-  fontSize: 12,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  whiteSpace: "nowrap",
+  padding: "6px 12px", borderRadius: 8, border: "1px solid #dde5ef",
+  background: "transparent", color: "#455468", fontWeight: 600,
+  fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+};
+
+const thStyle: React.CSSProperties = {
+  textAlign: "left", padding: "10px 20px",
+  fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+  letterSpacing: "0.06em", color: "#94a3b8",
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: "12px 20px", fontSize: 14, verticalAlign: "middle",
 };
