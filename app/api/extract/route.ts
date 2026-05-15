@@ -21,57 +21,59 @@ import { decryptText } from "../../../lib/crypto";
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ─── Entity type → TapClicks API endpoint ────────────────────────────────────
+// ─── Classic TapClicks API endpoints ─────────────────────────────────────────
 //
-// These paths are based on the AppScript and AppScript test URLs.
-// ASSUMPTION: all endpoints are GET and live under /server/api/.
-// Verify paths against the actual TapClicks instance if any return 404.
+// All paths are under /app/iotool/ (Classic OMS), not /server/api/entityforms/
+// (Adflo OMS). Each endpoint includes its own query string.
 
 const ENDPOINTS: Record<string, string> = {
-  lookup_type: "/server/api/lookuptype/list",
-  client:      "/server/api/entityforms/client",
-  order:       "/server/api/entityforms/order",
-  line_item:   "/server/api/entityforms/line_item",
-  flight:      "/server/api/entityforms/flight",
-  task:        "/server/api/entityforms/task",
-  workflow:    "/server/api/workflow/list",
+  lookup_type: "/app/iotool/lookups/types?showAll=true",
+  client:      "/app/iotool/form/formsByClusterId?clusterId=0&showAll=false&entityType=client",
+  order:       "/app/iotool/form/formsByClusterId?clusterId=0&showAll=false&entityType=order",
+  line_item:   "/app/iotool/products?showAll=yes",
+  flight:      "/app/iotool/products?showAll=yes",
+  task:        "/app/iotool/form/formsByClusterId?clusterId=0&showAll=false&entityType=task",
+  workflow:    "/app/iotool/workflows?showAll=true",
 };
 
-// ASSUMPTION: appending ?all=true returns the full unpaginated list on all
-// endpoints. If any endpoint paginates, this will silently return a partial
-// result. Verify against real data for large instances.
-const QUERY_SUFFIX = "?all=true";
+const REQUEST_HEADERS = {
+  Accept: "application/json",
+  "X-Requested-With": "XMLHttpRequest",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+};
 
 // ─── Response parsing ─────────────────────────────────────────────────────────
-//
-// Each parser converts a raw API response into a normalised ExtractedItem[].
-// Every ASSUMPTION below is a place to verify against real TapClicks data.
 
 interface ExtractedItem {
   id: string;
   name: string;
   referenceTable: string | null;
-  needsDetailFetch: boolean; // true when reference_table couldn't be resolved from the list response
-  raw: unknown; // stored as-is in the data (jsonb) column
+  needsDetailFetch: boolean;
+  raw: unknown;
 }
 
-// ASSUMPTION: All endpoints wrap their list under a `data` key.
-// Fallbacks to bare array, `items`, or `results` cover common alternatives.
-function getDataArray(parsed: unknown): unknown[] {
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed && typeof parsed === "object") {
-    const p = parsed as Record<string, unknown>;
-    if (Array.isArray(p.data))    return p.data;
-    if (Array.isArray(p.items))   return p.items;
-    if (Array.isArray(p.results)) return p.results;
-  }
-  return [];
+// formsByClusterId returns { forms: { "1": {...}, "2": {...} } }
+function parseFormsResponse(parsed: unknown): ExtractedItem[] {
+  if (!parsed || typeof parsed !== "object") return [];
+  const forms = (parsed as Record<string, unknown>).forms;
+  if (!forms || typeof forms !== "object" || Array.isArray(forms)) return [];
+  return Object.values(forms as Record<string, unknown>)
+    .map((raw) => {
+      const f = raw as Record<string, unknown>;
+      const id = String(f.id ?? "").trim();
+      const name = String(f.name ?? f.label ?? "").trim();
+      return { id, name, referenceTable: null, needsDetailFetch: false, raw };
+    })
+    .filter((item) => item.id !== "");
 }
 
-// ASSUMPTION: Lookup type items have numeric `id` and string `name`.
-// Possible alternative: `lookup_type_id` instead of `id`.
+// lookups/types returns { lookupTypes: [...] }
 function parseLookupTypes(parsed: unknown): ExtractedItem[] {
-  return getDataArray(parsed)
+  if (!parsed || typeof parsed !== "object") return [];
+  const arr = (parsed as Record<string, unknown>).lookupTypes;
+  if (!Array.isArray(arr)) return [];
+  return arr
     .map((raw) => {
       const i = raw as Record<string, unknown>;
       const id = String(i.id ?? i.lookup_type_id ?? "").trim();
@@ -81,95 +83,82 @@ function parseLookupTypes(parsed: unknown): ExtractedItem[] {
     .filter((item) => item.id !== "");
 }
 
-// ASSUMPTION: Entity form items (client/order/line_item/flight) have numeric
-// `id` and a string `name`. Possible alternative name fields: `label`, `title`.
-// The full raw item is stored in data (jsonb) so nothing is lost even if the
-// name field turns out to be different.
-function parseEntityForms(parsed: unknown): ExtractedItem[] {
-  return getDataArray(parsed)
+function getProductsArray(parsed: unknown): unknown[] {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object") {
+    const arr = (parsed as Record<string, unknown>).products;
+    if (Array.isArray(arr)) return arr;
+  }
+  return [];
+}
+
+// products?showAll=yes — all products become line item forms
+function parseProducts(parsed: unknown): ExtractedItem[] {
+  return getProductsArray(parsed)
     .map((raw) => {
-      const i = raw as Record<string, unknown>;
-      const id = String(i.id ?? "").trim();
-      const name = String(i.name ?? i.label ?? i.title ?? "").trim();
+      const p = raw as Record<string, unknown>;
+      const id = String(p.id ?? p.product_id ?? "").trim();
+      const name = String(p.name ?? p.product_name ?? "").trim();
       return { id, name, referenceTable: null, needsDetailFetch: false, raw };
     })
     .filter((item) => item.id !== "");
 }
 
-// Task forms additionally capture reference_table — the parent entity type
-// that this task form is attached to (e.g. "order", "flight", "line_item").
-// This is used by the migration route to detect parent-ambiguity.
-//
-// Confirmed path: reference_table lives at cluster[0].reference_table in the
-// detailed single-form response (GET /server/api/entityforms/task/{id}?all=true).
-// Whether the list endpoint exposes it at the top level is unverified — we try
-// the most likely field names and fall back gracefully.
-//
-// If reference_table is missing or empty after all fallbacks, needsDetailFetch
-// is set to true. The caller can use this flag to decide whether to fire the
-// per-item detail fetch to resolve it.
-//
-// FOLLOW-UP IMPROVEMENT (N+1 fetch):
-//   For items where needsDetailFetch=true, fetch each individually:
-//     GET /server/api/entityforms/task/{id}?all=true
-//   Then read: response.data.clusters[0].reference_table
-//   This is confirmed from the AppScript's getTaskFormForUpdate_ function which
-//   reads response.data.parent_form_name.entity_type — check both paths against
-//   real data to confirm which one holds the value you need.
-//   Doing this inline would be N+1 calls on the extraction, so it's better
-//   handled as a separate enrichment step in the UI after the initial extract.
-function parseTaskForms(parsed: unknown): ExtractedItem[] {
-  return getDataArray(parsed)
-    .map((raw) => {
-      const i = raw as Record<string, unknown>;
-      const id = String(i.id ?? "").trim();
-      const name = String(i.name ?? i.label ?? i.title ?? "").trim();
+// products?showAll=yes — filter to products with flight_form_id + enable_flights=1,
+// then deduplicate by flight_form_id
+function parseFlightForms(parsed: unknown): ExtractedItem[] {
+  const seen = new Set<string>();
+  const result: ExtractedItem[] = [];
 
-      // Try top-level list fields first. If the list response does include
-      // reference_table, one of these will catch it.
-      // If it's a comma/multi-value string, keep it as-is — the migration route
-      // will detect multiple values and surface needs_parent_selection.
-      const refRaw =
-        i.reference_table ??       // confirmed field name from detail response
-        i.entity_type ??           // possible alias in list response
-        i.parent_entity_type ??    // another possible alias
-        null;
-      const referenceTable = refRaw ? String(refRaw).trim() || null : null;
+  for (const raw of getProductsArray(parsed)) {
+    const p = raw as Record<string, unknown>;
+    const flightFormId = String(p.flight_form_id ?? "").trim();
+    if (!flightFormId || flightFormId === "0") continue;
 
-      // Flag items where we couldn't resolve reference_table from the list.
-      // The UI can surface these for a follow-up detail fetch.
-      const needsDetailFetch = referenceTable === null;
+    const enableFlights = p.enable_flights;
+    if (!enableFlights || enableFlights === "0" || enableFlights === 0 || enableFlights === false) continue;
 
-      return { id, name, referenceTable, needsDetailFetch, raw };
-    })
-    .filter((item) => item.id !== "");
+    if (seen.has(flightFormId)) continue;
+    seen.add(flightFormId);
+
+    const name = String(p.flight_form_name ?? p.name ?? "").trim();
+    result.push({ id: flightFormId, name, referenceTable: null, needsDetailFetch: false, raw });
+  }
+
+  return result;
 }
 
-// ASSUMPTION: Workflow list returns items with numeric `id` and string `name`.
-// Possible alternative: `workflow_id`, `title`.
+// workflows returns { workflows: [...] }
 function parseWorkflows(parsed: unknown): ExtractedItem[] {
-  return getDataArray(parsed)
+  if (!parsed || typeof parsed !== "object") return [];
+  const arr = (parsed as Record<string, unknown>).workflows;
+  if (!Array.isArray(arr)) return [];
+  return arr
     .map((raw) => {
-      const i = raw as Record<string, unknown>;
-      const id = String(i.id ?? i.workflow_id ?? "").trim();
-      const name = String(i.name ?? i.label ?? i.title ?? "").trim();
+      const w = raw as Record<string, unknown>;
+      const id = String(w.id ?? w.workflow_id ?? "").trim();
+      const name = String(w.name ?? w.title ?? "").trim();
       return { id, name, referenceTable: null, needsDetailFetch: false, raw };
     })
     .filter((item) => item.id !== "");
 }
 
 function parseResponse(entityType: string, parsed: unknown): ExtractedItem[] {
-  if (entityType === "lookup_type") return parseLookupTypes(parsed);
-  if (entityType === "task")        return parseTaskForms(parsed);
-  if (entityType === "workflow")    return parseWorkflows(parsed);
-  return parseEntityForms(parsed); // client, order, line_item, flight
+  switch (entityType) {
+    case "lookup_type": return parseLookupTypes(parsed);
+    case "client":
+    case "order":
+    case "task":        return parseFormsResponse(parsed);
+    case "line_item":   return parseProducts(parsed);
+    case "flight":      return parseFlightForms(parsed);
+    case "workflow":    return parseWorkflows(parsed);
+    default:            return [];
+  }
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  // Top-level catch so any unhandled exception surfaces in the server terminal
-  // rather than producing a generic 500 with no detail.
   try {
     return await handleExtract(req);
   } catch (err) {
@@ -231,8 +220,6 @@ async function handleExtract(req: NextRequest) {
     instance.base_url = "https://" + instance.base_url;
   }
 
-  // Adflo OMS uses a different (not yet known) API surface — block early with a
-  // clear message rather than silently hitting Classic endpoints on the wrong host.
   if (instance.instance_type === "adflo") {
     console.error(`[extract] Adflo extraction not supported: instance="${instance.name}"`);
     return NextResponse.json(
@@ -267,7 +254,7 @@ async function handleExtract(req: NextRequest) {
   // ── 3. Call TapClicks API ────────────────────────────────────────────────────
 
   const base = instance.base_url.replace(/\/+$/, "");
-  const url = `${base}${endpoint}${QUERY_SUFFIX}`;
+  const url = `${base}${endpoint}`;
 
   console.log(`[extract] Calling TapClicks: GET ${url}`);
 
@@ -277,11 +264,7 @@ async function handleExtract(req: NextRequest) {
   try {
     const response = await fetch(url, {
       method: "GET",
-      headers: {
-        Cookie: cookie,
-        Accept: "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-      },
+      headers: { ...REQUEST_HEADERS, Cookie: cookie },
     });
 
     httpCode = response.status;
@@ -339,8 +322,6 @@ async function handleExtract(req: NextRequest) {
   // ── 5. Save to extractions ───────────────────────────────────────────────────
   //
   // Delete existing rows for this instance + entity type, then insert fresh.
-  // This is simpler than upsert-on-conflict (no unique index required) and is
-  // the right semantic for re-extraction: old rows are fully replaced.
 
   const rows = items.map((item) => ({
     instance_id:     instanceId,
@@ -384,21 +365,12 @@ async function handleExtract(req: NextRequest) {
 
   console.log(`[extract] Insert OK — ${rows.length} rows saved`);
 
-
   // ── 6. Response ──────────────────────────────────────────────────────────────
-  //
-  // Return a lightweight summary. The full item list is included so the UI can
-  // populate the item picker immediately without a second round-trip to Supabase.
-
-  const needsDetailFetchCount = items.filter((i) => i.needsDetailFetch).length;
 
   return NextResponse.json({
     count: items.length,
     entityType,
     instanceName: instance.name,
-    // For task forms: how many items are missing reference_table and need
-    // a follow-up detail fetch to resolve it.
-    needsDetailFetchCount: entityType === "task" ? needsDetailFetchCount : 0,
     items: items.map((item) => ({
       id:               item.id,
       name:             item.name,
