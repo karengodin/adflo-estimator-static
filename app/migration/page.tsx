@@ -48,6 +48,9 @@ type QueueItem = {
   resultSnippet?: string;
 };
 
+type ClassicItem = { id: string; name: string };
+type MigratePayloadItem = { id: string; name: string; referenceTable: string | null };
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ENTITY_TYPES = [
@@ -365,11 +368,16 @@ function EntitySection({
   allRuns: Record<string, MigrationRun[]>;
   onMigrated: () => void;
 }) {
-  const [mode, setMode] = useState<"pick" | "paste">("pick");
+  const [mode, setMode] = useState<"fetch" | "paste">("fetch");
   const [pasteInput, setPasteInput] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [migrating, setMigrating] = useState(false);
   const [results, setResults] = useState<MigrateResult[]>([]);
+
+  // Classic fetch state
+  const [classicItems, setClassicItems] = useState<ClassicItem[]>([]);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const pasteResolved = mode === "paste" && pasteInput.trim() ? resolveInput(pasteInput, items) : null;
 
@@ -377,24 +385,42 @@ function EntitySection({
     setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
   const selectAllPending = () =>
-    setSelected(new Set(items.filter((i) => latestRun[i.item_id]?.status !== "success").map((i) => i.item_id)));
+    setSelected(new Set(classicItems.filter((i) => latestRun[i.id]?.status !== "success").map((i) => i.id)));
 
-  const getItemsToMigrate = (): ExtractionItem[] =>
-    mode === "paste" ? (pasteResolved?.resolved ?? []) : items.filter((i) => selected.has(i.item_id));
+  const fetchFromClassic = async () => {
+    setFetching(true);
+    setFetchError(null);
+    try {
+      const res = await fetch(`/api/classic/${entityType}?instanceId=${instanceId}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setFetchError(data.error ?? `HTTP ${res.status}`);
+      } else {
+        setClassicItems(Array.isArray(data) ? data : []);
+        setSelected(new Set());
+      }
+    } catch (err) {
+      setFetchError(`Network error: ${String(err).slice(0, 100)}`);
+    } finally {
+      setFetching(false);
+    }
+  };
 
-  const runMigrate = async (toMigrate: ExtractionItem[], appendResults = false) => {
-    if (!toMigrate.length) return;
+  const getPayload = (): MigratePayloadItem[] => {
+    if (mode === "paste") {
+      return (pasteResolved?.resolved ?? []).map((i) => ({ id: i.item_id, name: i.item_name, referenceTable: i.reference_table }));
+    }
+    return classicItems.filter((i) => selected.has(i.id)).map((i) => ({ id: i.id, name: i.name, referenceTable: null }));
+  };
+
+  const runMigrate = async (payload: MigratePayloadItem[], appendResults = false) => {
+    if (!payload.length) return;
     setMigrating(true);
     try {
       const res = await fetch("/api/migrate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instanceId,
-          entityType,
-          items: toMigrate.map((i) => ({ id: i.item_id, name: i.item_name, referenceTable: i.reference_table })),
-          pendingOnly: false,
-        }),
+        body: JSON.stringify({ instanceId, entityType, items: payload, pendingOnly: false }),
       });
       const data = await res.json();
       const newResults: MigrateResult[] = data.results ?? [];
@@ -417,32 +443,30 @@ function EntitySection({
         <span style={{ fontSize: 15, fontWeight: 700, color: "#0f1623", flex: 1 }}>{label}</span>
 
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          {items.length === 0 && <span style={{ fontSize: 12, color: "#94a3b8" }}>Not extracted</span>}
           {successCount > 0 && <Chip value={successCount} label="done" color="#16a34a" bg="rgba(34,197,94,0.1)" />}
           {pendingCount > 0 && items.length > 0 && <Chip value={pendingCount} label="pending" color="#627286" bg="rgba(148,163,184,0.1)" />}
         </div>
 
-        {items.length > 0 && (
-          <div style={{ display: "flex", borderRadius: 8, border: "1px solid #dde5ef", overflow: "hidden" }}>
-            {(["pick", "paste"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                style={{
-                  padding: "5px 12px", border: "none",
-                  background: mode === m ? "#2f6fed" : "transparent",
-                  color: mode === m ? "#fff" : "#627286",
-                  fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                {m === "pick" ? "Pick from Xtract" : "Paste IDs/Names"}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Mode toggle — always visible */}
+        <div style={{ display: "flex", borderRadius: 8, border: "1px solid #dde5ef", overflow: "hidden" }}>
+          {(["fetch", "paste"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              style={{
+                padding: "5px 12px", border: "none",
+                background: mode === m ? "#2f6fed" : "transparent",
+                color: mode === m ? "#fff" : "#627286",
+                fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              {m === "fetch" ? "Fetch from Classic" : "Paste IDs/Names"}
+            </button>
+          ))}
+        </div>
 
         <button
-          onClick={() => runMigrate(getItemsToMigrate())}
+          onClick={() => runMigrate(getPayload())}
           disabled={migrating || !canMigrate}
           style={{ ...primaryBtnStyle, fontSize: 12, padding: "6px 14px", opacity: migrating || !canMigrate ? 0.45 : 1 }}
         >
@@ -452,7 +476,7 @@ function EntitySection({
 
       {/* Paste mode */}
       {mode === "paste" && (
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid #eef3f8" }}>
+        <div style={{ padding: "14px 20px", borderBottom: results.length > 0 ? "1px solid #eef3f8" : "none" }}>
           <textarea
             style={{ ...inputStyle, minHeight: 72, fontFamily: "monospace", fontSize: 12, resize: "vertical" }}
             placeholder="Paste comma-separated IDs or names…"
@@ -467,61 +491,86 @@ function EntitySection({
                 </span>
               )}
               {pasteResolved.unmatched.length > 0 && (
-                <span style={{ color: "#dc2626" }}>Not found: {pasteResolved.unmatched.join(", ")}</span>
-              )}
-              {pasteResolved.resolved.length === 0 && pasteResolved.unmatched.length === 0 && items.length === 0 && (
-                <span style={{ color: "#94a3b8" }}>Extract this entity type first to resolve names/IDs.</span>
+                <span style={{ color: "#dc2626" }}>Not found in extractions: {pasteResolved.unmatched.join(", ")}</span>
               )}
             </div>
           )}
         </div>
       )}
 
-      {/* Pick mode */}
-      {mode === "pick" && items.length > 0 && (
+      {/* Fetch from Classic mode */}
+      {mode === "fetch" && (
         <>
-          <div style={{ padding: "7px 20px", background: "#f8fafc", borderBottom: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={selectAllPending} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Select all pending</button>
-            <button onClick={() => setSelected(new Set())} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Clear</button>
-            {selected.size > 0 && <span style={{ fontSize: 12, color: "#627286" }}>{selected.size} selected</span>}
-          </div>
-          <div style={{ maxHeight: 300, overflowY: "auto" }}>
-            {items.map((item, i) => {
-              const run = latestRun[item.item_id];
-              const isChecked = selected.has(item.item_id);
-              const statusInfo = run ? humanStatus(run.status, run.snippet) : null;
-              return (
-                <div
-                  key={item.item_id}
-                  onClick={() => toggleItem(item.item_id)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10, padding: "8px 20px",
-                    borderBottom: i < items.length - 1 ? "1px solid #f1f5f9" : "none",
-                    background: isChecked ? "rgba(47,111,237,0.03)" : "transparent",
-                    cursor: "pointer",
-                  }}
+          {classicItems.length === 0 && (
+            <div style={{ padding: "16px 20px", borderBottom: results.length > 0 ? "1px solid #eef3f8" : "none", display: "flex", alignItems: "center", gap: 12 }}>
+              <button
+                onClick={fetchFromClassic}
+                disabled={fetching}
+                style={{ ...primaryBtnStyle, opacity: fetching ? 0.6 : 1 }}
+              >
+                {fetching ? "Fetching…" : "Fetch from Classic"}
+              </button>
+              {fetchError && (
+                <span style={{ fontSize: 13, color: "#dc2626" }}>{fetchError}</span>
+              )}
+            </div>
+          )}
+
+          {classicItems.length > 0 && (
+            <>
+              <div style={{ padding: "7px 20px", background: "#f8fafc", borderBottom: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={selectAllPending} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Select all pending</button>
+                <button onClick={() => setSelected(new Set())} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Clear</button>
+                <button
+                  onClick={() => { setClassicItems([]); setSelected(new Set()); setFetchError(null); }}
+                  style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}
                 >
-                  <input
-                    type="checkbox" checked={isChecked}
-                    onChange={() => toggleItem(item.item_id)}
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ accentColor: "#2f6fed", flexShrink: 0 }}
-                  />
-                  <span style={{ flex: 1, fontSize: 13, color: "#0f1623", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {item.item_name || item.item_id}
-                  </span>
-                  <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", flexShrink: 0 }}>
-                    #{item.item_id}
-                  </span>
-                  {statusInfo && (
-                    <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: statusInfo.bg, color: statusInfo.color, flexShrink: 0 }}>
-                      {statusInfo.label}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                  Re-fetch
+                </button>
+                <span style={{ fontSize: 12, color: "#94a3b8", marginLeft: "auto" }}>
+                  {classicItems.length} from Classic
+                  {selected.size > 0 ? ` · ${selected.size} selected` : ""}
+                </span>
+              </div>
+              <div style={{ maxHeight: 300, overflowY: "auto" }}>
+                {classicItems.map((item, i) => {
+                  const run = latestRun[item.id];
+                  const isChecked = selected.has(item.id);
+                  const statusInfo = run ? humanStatus(run.status, run.snippet) : null;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => toggleItem(item.id)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10, padding: "8px 20px",
+                        borderBottom: i < classicItems.length - 1 ? "1px solid #f1f5f9" : "none",
+                        background: isChecked ? "rgba(47,111,237,0.03)" : "transparent",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox" checked={isChecked}
+                        onChange={() => toggleItem(item.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ accentColor: "#2f6fed", flexShrink: 0 }}
+                      />
+                      <span style={{ flex: 1, fontSize: 13, color: "#0f1623", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.name || item.id}
+                      </span>
+                      <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", flexShrink: 0 }}>
+                        #{item.id}
+                      </span>
+                      {statusInfo && (
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: statusInfo.bg, color: statusInfo.color, flexShrink: 0 }}>
+                          {statusInfo.label}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -531,7 +580,14 @@ function EntitySection({
           results={results}
           allRuns={allRuns}
           onRetry={(ids) => {
-            const toRetry = items.filter((i) => ids.includes(i.item_id));
+            const byId = new Map(classicItems.map((i) => [i.id, i]));
+            const toRetry = ids
+              .map((id) => byId.get(id) ?? items.find((i) => i.item_id === id))
+              .filter(Boolean)
+              .map((i) => "item_id" in i!
+                ? { id: (i as ExtractionItem).item_id, name: (i as ExtractionItem).item_name, referenceTable: (i as ExtractionItem).reference_table }
+                : { id: (i as ClassicItem).id, name: (i as ClassicItem).name, referenceTable: null }
+              );
             runMigrate(toRetry, true);
           }}
           isRetrying={migrating}
@@ -772,9 +828,8 @@ function ReassignmentTab({
     <div>
       {noExtractedWarning && (
         <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#92400e" }}>
-          {taskForms.length === 0 && <span>Task forms not extracted. </span>}
-          {workflows.length === 0 && <span>Workflows not extracted. </span>}
-          Switch to the Classic → Adflo tab and extract these entity types first.
+          {taskForms.length === 0 && <span>Task forms not found. Click &ldquo;Fetch from Classic&rdquo; in the Task Forms section to load task form data. </span>}
+          {workflows.length === 0 && <span>Workflows not found. Click &ldquo;Fetch from Classic&rdquo; in the Extraction Status card to load workflow data.</span>}
         </div>
       )}
 
