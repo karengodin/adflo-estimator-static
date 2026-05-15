@@ -2,18 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 import { decryptText } from "../../../../lib/crypto";
 
-// ─── Classic TapClicks endpoints (same paths as extract/route.ts) ─────────────
-
-const ENDPOINTS: Record<string, string> = {
-  lookup_type: "/app/iotool/lookups/types?showAll=true",
-  client:      "/app/iotool/form/formsByClusterId?clusterId=0&showAll=false&entityType=client",
-  order:       "/app/iotool/form/formsByClusterId?clusterId=0&showAll=false&entityType=order",
-  line_item:   "/app/iotool/products?showAll=yes",
-  flight:      "/app/iotool/products?showAll=yes",
-  task:        "/app/iotool/form/formsByClusterId?clusterId=0&showAll=false&entityType=task",
-  workflow:    "/app/iotool/workflows?showAll=true",
-};
-
 const REQUEST_HEADERS = {
   Accept: "application/json",
   "X-Requested-With": "XMLHttpRequest",
@@ -21,11 +9,32 @@ const REQUEST_HEADERS = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 };
 
-// ─── Parsers — each returns a flat [{id, name}] list ─────────────────────────
+// Entity types that query per-cluster and merge results.
+// lookup_type and workflow have no cluster dimension.
+const CLUSTER_AWARE = new Set(["client", "order", "task", "line_item", "flight"]);
+
+// Fixed single-endpoint types
+const FIXED_ENDPOINTS: Record<string, string> = {
+  lookup_type: "/app/iotool/lookups/types?showAll=true",
+  workflow:    "/app/iotool/workflows?showAll=true",
+};
+
+const VALID_ENTITY_TYPES = [...CLUSTER_AWARE, ...Object.keys(FIXED_ENDPOINTS)];
+
+// ─── URL builders ─────────────────────────────────────────────────────────────
+
+function buildClusterUrl(entityType: string, clusterId: string | number): string {
+  if (entityType === "line_item" || entityType === "flight") {
+    return `/app/iotool/products?clusterId=${clusterId}&showAll=yes`;
+  }
+  return `/app/iotool/form/formsByClusterId?clusterId=${clusterId}&showAll=false&entityType=${entityType}`;
+}
+
+// ─── Parsers — each returns [{id, name}] ─────────────────────────────────────
 
 type ClassicItem = { id: string; name: string };
 
-// GET /app/iotool/lookups/types → { lookupTypes: [...] }
+// /app/iotool/lookups/types → { lookupTypes: [...] }
 function parseLookupTypes(parsed: unknown): ClassicItem[] {
   const arr = (parsed as Record<string, unknown>)?.lookupTypes;
   if (!Array.isArray(arr)) return [];
@@ -37,7 +46,7 @@ function parseLookupTypes(parsed: unknown): ClassicItem[] {
     .filter((i) => i.id !== "");
 }
 
-// GET /app/iotool/form/formsByClusterId → { forms: { "1": {...}, "2": {...} } }
+// /app/iotool/form/formsByClusterId → { forms: { "1": {...}, "2": {...} } }
 function parseFormsResponse(parsed: unknown): ClassicItem[] {
   const forms = (parsed as Record<string, unknown>)?.forms;
   if (!forms || typeof forms !== "object" || Array.isArray(forms)) return [];
@@ -55,7 +64,7 @@ function getProductsArray(parsed: unknown): unknown[] {
   return Array.isArray(arr) ? arr : [];
 }
 
-// GET /app/iotool/products → all products as line item forms
+// /app/iotool/products → all products as line item forms
 function parseProducts(parsed: unknown): ClassicItem[] {
   return getProductsArray(parsed)
     .map((raw) => {
@@ -65,7 +74,7 @@ function parseProducts(parsed: unknown): ClassicItem[] {
     .filter((i) => i.id !== "");
 }
 
-// GET /app/iotool/products → filter flight forms, deduplicate by flight_form_id
+// /app/iotool/products → deduplicate by flight_form_id, filter enable_flights
 function parseFlightForms(parsed: unknown): ClassicItem[] {
   const seen = new Set<string>();
   const result: ClassicItem[] = [];
@@ -83,7 +92,7 @@ function parseFlightForms(parsed: unknown): ClassicItem[] {
   return result;
 }
 
-// GET /app/iotool/workflows → { workflows: [...] }
+// /app/iotool/workflows → { workflows: [...] }
 function parseWorkflows(parsed: unknown): ClassicItem[] {
   const arr = (parsed as Record<string, unknown>)?.workflows;
   if (!Array.isArray(arr)) return [];
@@ -95,7 +104,7 @@ function parseWorkflows(parsed: unknown): ClassicItem[] {
     .filter((i) => i.id !== "");
 }
 
-function parseResponse(entityType: string, parsed: unknown): ClassicItem[] {
+function parseClusterResponse(entityType: string, parsed: unknown): ClassicItem[] {
   switch (entityType) {
     case "lookup_type": return parseLookupTypes(parsed);
     case "client":
@@ -106,6 +115,54 @@ function parseResponse(entityType: string, parsed: unknown): ClassicItem[] {
     case "workflow":    return parseWorkflows(parsed);
     default:            return [];
   }
+}
+
+// ─── Multi-cluster helpers ────────────────────────────────────────────────────
+
+function isSessionExpired(parsed: unknown): boolean {
+  return !!(parsed && typeof parsed === "object" && (parsed as Record<string, unknown>).state === "login");
+}
+
+// Fetch and parse JSON from a Classic endpoint. Returns null on any failure
+// (network error, non-2xx, non-JSON) — callers skip null results silently.
+async function fetchJSON(url: string, headers: Record<string, string>): Promise<unknown | null> {
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) return null;
+    const text = await res.text();
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// GET /app/iotool/clusters — returns all cluster IDs excluding 0.
+// Response shape is unknown; we try the three most common variants.
+async function fetchClusterIds(base: string, headers: Record<string, string>): Promise<string[]> {
+  const parsed = await fetchJSON(`${base}/app/iotool/clusters`, headers);
+  if (!parsed) return [];
+
+  const arr: unknown[] = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray((parsed as Record<string, unknown>).clusters)
+      ? (parsed as Record<string, unknown>).clusters as unknown[]
+      : Array.isArray((parsed as Record<string, unknown>).data)
+        ? (parsed as Record<string, unknown>).data as unknown[]
+        : [];
+
+  return arr
+    .map((c) => String((c as Record<string, unknown>).id ?? (c as Record<string, unknown>).cluster_id ?? "").trim())
+    .filter((id) => id && id !== "0");
+}
+
+// Deduplicate by id, keeping the first occurrence (clusterId=0 items win).
+function deduplicateById(items: ClassicItem[]): ClassicItem[] {
+  const seen = new Set<string>();
+  return items.filter(({ id }) => {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -120,11 +177,9 @@ export async function GET(
   if (!instanceId) {
     return NextResponse.json({ error: "Missing instanceId" }, { status: 400 });
   }
-
-  const endpoint = ENDPOINTS[entityType];
-  if (!endpoint) {
+  if (!VALID_ENTITY_TYPES.includes(entityType)) {
     return NextResponse.json(
-      { error: `Unknown entityType: "${entityType}". Valid: ${Object.keys(ENDPOINTS).join(", ")}` },
+      { error: `Unknown entityType: "${entityType}". Valid: ${VALID_ENTITY_TYPES.join(", ")}` },
       { status: 400 }
     );
   }
@@ -154,39 +209,52 @@ export async function GET(
     return NextResponse.json({ error: "Failed to decrypt session cookie." }, { status: 500 });
   }
 
-  // ── Fetch from Classic ────────────────────────────────────────────────────
-
   const base = (instance.base_url.startsWith("http") ? instance.base_url : "https://" + instance.base_url).replace(/\/+$/, "");
-  const url = `${base}${endpoint}`;
+  const headers = { ...REQUEST_HEADERS, Cookie: cookie };
 
-  let rawBody: string;
-  let httpCode: number;
-  try {
-    const res = await fetch(url, { headers: { ...REQUEST_HEADERS, Cookie: cookie } });
-    httpCode = res.status;
-    rawBody = await res.text();
-  } catch (err) {
-    return NextResponse.json({ error: `Network error: ${String(err).slice(0, 200)}` }, { status: 502 });
+  // ── Non-cluster-aware types: single fetch ─────────────────────────────────
+
+  if (!CLUSTER_AWARE.has(entityType)) {
+    const url = `${base}${FIXED_ENDPOINTS[entityType]}`;
+    const parsed = await fetchJSON(url, headers);
+
+    if (parsed === null) {
+      return NextResponse.json({ error: "Failed to reach Classic instance" }, { status: 502 });
+    }
+    if (isSessionExpired(parsed)) {
+      return NextResponse.json({ error: "Session expired. Refresh the cookie on the Instances page." }, { status: 401 });
+    }
+
+    return NextResponse.json(parseClusterResponse(entityType, parsed));
   }
 
-  if (httpCode < 200 || httpCode >= 300) {
-    return NextResponse.json({ error: `TapClicks returned HTTP ${httpCode}` }, { status: 502 });
+  // ── Cluster-aware types: fetch clusters, then fetch all in parallel ────────
+  //
+  // Step 1: get all cluster IDs (excludes 0 = "All Business Units")
+  const clusterIds = await fetchClusterIds(base, headers);
+
+  // Step 2: build the full set of clusterIds to query: [0, ...clusterIds]
+  const allClusterIds = ["0", ...clusterIds];
+
+  // Step 3: fetch all clusters in parallel
+  const clusterResults = await Promise.all(
+    allClusterIds.map(async (clusterId) => {
+      const url = `${base}${buildClusterUrl(entityType, clusterId)}`;
+      const parsed = await fetchJSON(url, headers);
+      if (parsed === null) return [];
+      // If any cluster returns session-expired, surface it (we'll detect below)
+      if (isSessionExpired(parsed)) return { expired: true } as unknown as ClassicItem[];
+      return parseClusterResponse(entityType, parsed);
+    })
+  );
+
+  // Surface session expiry if any cluster hit it
+  if (clusterResults.some((r) => !Array.isArray(r) && (r as unknown as { expired: boolean }).expired)) {
+    return NextResponse.json({ error: "Session expired. Refresh the cookie on the Instances page." }, { status: 401 });
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawBody);
-  } catch {
-    return NextResponse.json({ error: "TapClicks returned non-JSON response" }, { status: 502 });
-  }
+  // Step 4: combine all results, deduplicate by id (clusterId=0 items win)
+  const combined = deduplicateById((clusterResults as ClassicItem[][]).flat());
 
-  if (parsed && typeof parsed === "object" && (parsed as Record<string, unknown>).state === "login") {
-    return NextResponse.json(
-      { error: "Session expired. Refresh the cookie on the Instances page." },
-      { status: 401 }
-    );
-  }
-
-  const items = parseResponse(entityType, parsed);
-  return NextResponse.json(items);
+  return NextResponse.json(combined);
 }
