@@ -22,9 +22,12 @@ type ExtractionItem = {
 type MigrationRun = {
   entity_type: string;
   item_id: string;
+  item_name?: string;
   status: string;
+  http_code?: number;
   snippet: string;
   run_at: string;
+  is_retry?: boolean;
 };
 
 type MigrateResult = {
@@ -51,6 +54,36 @@ type QueueItem = {
 type ClassicItem = { id: string; name: string };
 type MigratePayloadItem = { id: string; name: string; referenceTable: string | null };
 
+type ConflictOption = {
+  classicProductName: string;
+  adfloId: string | null;
+  adfloName: string | null;
+  confidence: string | null;
+};
+
+type AnalysisProposal = {
+  taskFormId: string;
+  taskFormName: string;
+  currentParentId?: string | null;
+  currentParentName?: string | null;
+  proposedParentId: string | null;
+  proposedParentName: string | null;
+  parentEntityType: string | null;
+  confidence: "high" | "medium" | "low" | null;
+  reasoning: string;
+  status: "proposed" | "conflict" | "not_found";
+  conflictDetails?: string;
+  conflictOptions?: ConflictOption[];
+  classicWorkflows?: string[];
+};
+
+type AnalysisSummary = {
+  totalAnalyzed: number;
+  proposed: number;
+  conflicts: number;
+  notFound: number;
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ENTITY_TYPES = [
@@ -62,7 +95,92 @@ const ENTITY_TYPES = [
   { key: "task",        label: "Task Forms" },
 ] as const;
 
+const ENTITY_TYPE_LABELS: Record<string, string> = {
+  lookup_type:       "Lookup Type",
+  client:            "Client Form",
+  order:             "Order Form",
+  line_item:         "Product Form",
+  flight:            "Flight Form",
+  task:              "Task Form",
+  workflow:          "Workflow",
+  task_form_parent:  "Task Form Parent",
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function downloadCsv(rows: Record<string, unknown>[], filename: string) {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const escape = (v: unknown) => {
+    const s = String(v ?? "");
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [
+    headers.join(","),
+    ...rows.map((row) => headers.map((h) => escape(row[h])).join(",")),
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function migrateResultsToCsvRows(
+  results: MigrateResult[],
+  entityType: string,
+): Record<string, unknown>[] {
+  const STATUS_LABEL: Record<string, string> = {
+    success:              "succeeded",
+    partial_success:      "partial",
+    error:                "failed",
+    skipped:              "skipped",
+    needs_parent_selection: "needs parent",
+  };
+  return results.map((r) => {
+    const info = humanStatus(r.status, r.snippet);
+    return {
+      entity_type:  ENTITY_TYPE_LABELS[entityType] ?? entityType,
+      item_name:    r.name,
+      item_id:      r.id,
+      status:       STATUS_LABEL[r.status] ?? r.status,
+      description:  info.description,
+      http_code:    r.httpCode || "",
+      snippet:      r.snippet,
+      timestamp:    r.ranAt,
+      is_retry:     r.isRetry ? "yes" : "no",
+    };
+  });
+}
+
+function migrationRunsToCsvRows(runs: MigrationRun[]): Record<string, unknown>[] {
+  const STATUS_LABEL: Record<string, string> = {
+    success:              "succeeded",
+    partial_success:      "partial",
+    error:                "failed",
+    skipped:              "skipped",
+    needs_parent_selection: "needs parent",
+  };
+  return runs.map((r) => {
+    const info = humanStatus(r.status, r.snippet);
+    return {
+      entity_type:  ENTITY_TYPE_LABELS[r.entity_type] ?? r.entity_type,
+      item_name:    r.item_name ?? "",
+      item_id:      r.item_id,
+      status:       STATUS_LABEL[r.status] ?? r.status,
+      description:  info.description,
+      http_code:    r.http_code ?? "",
+      snippet:      r.snippet,
+      timestamp:    r.run_at,
+      is_retry:     r.is_retry ? "yes" : "no",
+    };
+  });
+}
 
 function humanStatus(status: string, snippet: string) {
   const isNoOp = snippet.includes("NO-OP") || snippet.toLowerCase().includes("0 items added");
@@ -116,6 +234,27 @@ export default function MigrationPage() {
 
   const [extractions, setExtractions] = useState<Record<string, ExtractionItem[]>>({});
   const [extractionsLoading, setExtractionsLoading] = useState(false);
+  const [exportingHistory, setExportingHistory] = useState(false);
+
+  const exportHistory = async () => {
+    if (!selectedInstanceId) return;
+    setExportingHistory(true);
+    try {
+      const res = await fetch(`/api/migration-runs?instanceId=${selectedInstanceId}`);
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Export failed: ${data.error ?? `HTTP ${res.status}`}`);
+        return;
+      }
+      const runs: MigrationRun[] = Array.isArray(data) ? data : [];
+      if (!runs.length) { alert("No migration runs found for this instance."); return; }
+      const instanceName = instances.find((i) => i.id === selectedInstanceId)?.name ?? selectedInstanceId;
+      const slug = instanceName.replace(/[^a-z0-9]/gi, "-").toLowerCase();
+      downloadCsv(migrationRunsToCsvRows(runs), `migration-history-${slug}-${new Date().toISOString().slice(0, 10)}.csv`);
+    } finally {
+      setExportingHistory(false);
+    }
+  };
   // Latest run per (entityType, itemId) — for checklist badges
   const [latestRun, setLatestRun] = useState<Record<string, Record<string, MigrationRun>>>({});
   // All runs per (entityType, itemId) — for expandable history
@@ -171,7 +310,7 @@ export default function MigrationPage() {
   }, [selectedInstanceId, loadData]);
 
   return (
-    <div style={{ maxWidth: 940, margin: "0 auto", padding: "28px 24px" }}>
+    <div style={{ margin: "0 auto", padding: "28px 24px" }}>
       {/* ── Header ── */}
       <div style={{ marginBottom: 24, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
         <div>
@@ -185,12 +324,24 @@ export default function MigrationPage() {
           ) : instances.length === 0 ? (
             <span style={{ fontSize: 13, color: "#dc2626" }}>No instances found. Add one on the Instances page.</span>
           ) : (
-            <select value={selectedInstanceId} onChange={(e) => setSelectedInstanceId(e.target.value)} style={selectStyle}>
-              <option value="">Select an instance…</option>
-              {instances.map((inst) => (
-                <option key={inst.id} value={inst.id}>{inst.name}</option>
-              ))}
-            </select>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <select value={selectedInstanceId} onChange={(e) => setSelectedInstanceId(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
+                <option value="">Select an instance…</option>
+                {instances.map((inst) => (
+                  <option key={inst.id} value={inst.id}>{inst.name}</option>
+                ))}
+              </select>
+              {selectedInstanceId && (
+                <button
+                  onClick={exportHistory}
+                  disabled={exportingHistory}
+                  title="Export full migration history for this instance as CSV"
+                  style={{ ...ghostBtnStyle, fontSize: 12, whiteSpace: "nowrap", opacity: exportingHistory ? 0.6 : 1 }}
+                >
+                  {exportingHistory ? "Exporting…" : "Export History"}
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -512,6 +663,8 @@ function EntitySection({
         <ResultsPanel
           results={results}
           allRuns={allRuns}
+          entityType={entityType}
+          entityLabel={label}
           onRetry={(ids) => {
             const byId = new Map(classicItems.map((i) => [i.id, i]));
             const toRetry = ids
@@ -535,11 +688,15 @@ function EntitySection({
 function ResultsPanel({
   results,
   allRuns,
+  entityType,
+  entityLabel,
   onRetry,
   isRetrying,
 }: {
   results: MigrateResult[];
   allRuns: Record<string, MigrationRun[]>;
+  entityType: string;
+  entityLabel: string;
   onRetry: (ids: string[]) => void;
   isRetrying: boolean;
 }) {
@@ -566,21 +723,35 @@ function ResultsPanel({
   return (
     <div style={{ borderTop: "1px solid #eef3f8" }}>
       {/* Summary bar */}
-      <div style={{ padding: "10px 20px", background: "#f8fafc", borderBottom: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+      <div style={{ padding: "10px 20px", background: "#f8fafc", borderBottom: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>RUN RESULTS</span>
         {counts.succeeded > 0 && <Chip value={counts.succeeded} label="succeeded" color="#16a34a" bg="rgba(34,197,94,0.1)" />}
         {counts.partial > 0   && <Chip value={counts.partial}   label="partial"   color="#b45309" bg="rgba(251,191,36,0.1)" />}
         {counts.failed > 0    && <Chip value={counts.failed}    label="failed"    color="#dc2626" bg="rgba(239,68,68,0.1)" />}
         {counts.skipped > 0   && <Chip value={counts.skipped}   label="skipped"   color="#64748b" bg="rgba(148,163,184,0.1)" />}
-        {depFailures.length > 0 && (
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {depFailures.length > 0 && (
+            <button
+              onClick={() => onRetry(depFailures.map((r) => r.id))}
+              disabled={isRetrying}
+              style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 12px", color: "#7c3aed", borderColor: "#e9d5ff", opacity: isRetrying ? 0.6 : 1 }}
+            >
+              {isRetrying ? "Retrying…" : `Retry ${depFailures.length} dep. ${depFailures.length === 1 ? "failure" : "failures"}`}
+            </button>
+          )}
           <button
-            onClick={() => onRetry(depFailures.map((r) => r.id))}
-            disabled={isRetrying}
-            style={{ ...ghostBtnStyle, marginLeft: "auto", fontSize: 11, padding: "4px 12px", color: "#7c3aed", borderColor: "#e9d5ff", opacity: isRetrying ? 0.6 : 1 }}
+            onClick={() => {
+              const slug = entityLabel.replace(/[^a-z0-9]/gi, "-").toLowerCase();
+              downloadCsv(
+                migrateResultsToCsvRows(latest, entityType),
+                `migration-results-${slug}-${new Date().toISOString().slice(0, 10)}.csv`,
+              );
+            }}
+            style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 12px" }}
           >
-            {isRetrying ? "Retrying…" : `Retry ${depFailures.length} dep. ${depFailures.length === 1 ? "failure" : "failures"}`}
+            Export Results
           </button>
-        )}
+        </div>
       </div>
 
       {/* Per-item rows */}
@@ -667,6 +838,18 @@ function ReassignmentTab({
   const taskForms = extractions["task"] ?? [];
   const workflows = extractions["workflow"] ?? [];
 
+  // ── AI Analysis state ──────────────────────────────────────────────────────
+  const [unassignedOnly, setUnassignedOnly] = useState(true);
+  const [analysisState, setAnalysisState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [proposals, setProposals] = useState<AnalysisProposal[]>([]);
+  const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [approvalMap, setApprovalMap] = useState<Record<string, "approved" | "skipped" | undefined>>({});
+  const [conflictResolutions, setConflictResolutions] = useState<Record<string, { parentId: string; parentName: string }>>({});
+  const [executing, setExecuting] = useState(false);
+  const [execResults, setExecResults] = useState<Record<string, { success: boolean; message: string }>>({});
+
+  // ── Manual queue state ─────────────────────────────────────────────────────
   const [taskInput, setTaskInput] = useState("");
   const [taskResolved, setTaskResolved] = useState<ExtractionItem | null>(null);
   const [taskNotFound, setTaskNotFound] = useState(false);
@@ -677,6 +860,144 @@ function ReassignmentTab({
 
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [running, setRunning] = useState(false);
+
+  // ── AI Analysis handlers ───────────────────────────────────────────────────
+
+  const resetAnalysis = () => {
+    setAnalysisState("idle");
+    setProposals([]);
+    setAnalysisSummary(null);
+    setAnalysisError(null);
+    setApprovalMap({});
+    setConflictResolutions({});
+    setExecResults({});
+  };
+
+  const setMode = (newUnassignedOnly: boolean) => {
+    if (newUnassignedOnly === unassignedOnly) return;
+    setUnassignedOnly(newUnassignedOnly);
+    if (analysisState === "done" || analysisState === "error") resetAnalysis();
+  };
+
+  const runAnalysis = async () => {
+    setAnalysisState("loading");
+    setAnalysisError(null);
+    setProposals([]);
+    setAnalysisSummary(null);
+    setApprovalMap({});
+    setConflictResolutions({});
+    setExecResults({});
+
+    try {
+      const res = await fetch("/api/adflo/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instanceId, unassignedOnly }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAnalysisState("error");
+        setAnalysisError(data.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setProposals(data.proposals ?? []);
+      setAnalysisSummary(data.summary ?? null);
+      // Auto-approve high-confidence proposals that have a resolved parent
+      const autoApprove: Record<string, "approved" | "skipped"> = {};
+      for (const p of (data.proposals ?? []) as AnalysisProposal[]) {
+        if (p.status === "proposed" && p.proposedParentId && p.confidence === "high") {
+          autoApprove[p.taskFormId] = "approved";
+        }
+      }
+      setApprovalMap(autoApprove);
+      setAnalysisState("done");
+    } catch (e) {
+      setAnalysisState("error");
+      setAnalysisError(String(e));
+    }
+  };
+
+  const setApproval = (id: string, action: "approved" | "skipped" | undefined) =>
+    setApprovalMap(prev => ({ ...prev, [id]: action }));
+
+  const resolveConflict = (id: string, opt: ConflictOption) => {
+    if (!opt.adfloId) return;
+    setConflictResolutions(prev => ({ ...prev, [id]: { parentId: opt.adfloId!, parentName: opt.adfloName ?? "" } }));
+    setApprovalMap(prev => ({ ...prev, [id]: "approved" }));
+  };
+
+  const clearConflict = (id: string) => {
+    setConflictResolutions(prev => { const n = { ...prev }; delete n[id]; return n; });
+    setApprovalMap(prev => ({ ...prev, [id]: undefined }));
+  };
+
+  const isReadyToExecute = (p: AnalysisProposal) =>
+    !execResults[p.taskFormId] &&
+    approvalMap[p.taskFormId] === "approved" &&
+    (p.status === "conflict" ? !!conflictResolutions[p.taskFormId] : !!p.proposedParentId);
+
+  const executeApproved = async () => {
+    const toRun = proposals.filter(isReadyToExecute);
+    if (!toRun.length) return;
+    setExecuting(true);
+
+    let successCount = 0;
+
+    for (const p of toRun) {
+      const resolution = conflictResolutions[p.taskFormId];
+      const parentId   = resolution?.parentId   ?? p.proposedParentId;
+      const parentName = resolution?.parentName ?? p.proposedParentName;
+
+      const taskFormId = String(p.taskFormId ?? "").trim();
+      if (!taskFormId) {
+        console.error("[executeApproved] taskFormId missing for proposal:", p);
+        setExecResults(prev => ({ ...prev, [p.taskFormId]: { success: false, message: `Internal error: taskFormId is missing (proposal: ${p.taskFormName})` } }));
+        continue;
+      }
+      console.log("[executeApproved] Sending:", { taskFormId, parentId, parentName, parentEntityType: p.parentEntityType });
+
+      try {
+        const res = await fetch("/api/adflo/assign-task-form-parent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instanceId,
+            taskFormId,
+            newParentFormId:   parentId,
+            newParentFormName: parentName,
+            parentEntityType:  p.parentEntityType,
+          }),
+        });
+        const data = await res.json();
+        const ok = !!data.success;
+        if (ok) successCount++;
+        setExecResults((prev) => ({
+          ...prev,
+          [p.taskFormId]: {
+            success: ok,
+            message: data.snippet ?? data.error ?? (res.ok ? "Done" : `HTTP ${res.status}`),
+          },
+        }));
+      } catch (e) {
+        setExecResults((prev) => ({
+          ...prev,
+          [p.taskFormId]: { success: false, message: String(e) },
+        }));
+      }
+    }
+
+    setExecuting(false);
+
+    // Auto-refresh analysis so successfully assigned forms are no longer listed.
+    if (successCount > 0) {
+      runAnalysis();
+    }
+  };
+
+  const approvedCount = proposals.filter(isReadyToExecute).length;
+  const executedCount = Object.keys(execResults).length;
+
+  // ── Manual queue handlers ──────────────────────────────────────────────────
 
   const resolveTask = () => {
     const q = taskInput.trim();
@@ -754,21 +1075,351 @@ function ReassignmentTab({
     setRunning(false);
   };
 
-  const noExtractedWarning = taskForms.length === 0 || workflows.length === 0;
   const pendingCount = queue.filter((q) => q.status === "pending").length;
+
+  // ── Confidence badge helper ────────────────────────────────────────────────
+
+  const confidenceBadge = (c: AnalysisProposal["confidence"]) => {
+    const map = {
+      high:   { label: "High",   color: "#16a34a", bg: "rgba(34,197,94,0.12)" },
+      medium: { label: "Medium", color: "#b45309", bg: "rgba(251,191,36,0.12)" },
+      low:    { label: "Low",    color: "#dc2626", bg: "rgba(239,68,68,0.12)" },
+    };
+    if (!c || !map[c]) return null;
+    const s = map[c];
+    return (
+      <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: s.bg, color: s.color }}>
+        {s.label}
+      </span>
+    );
+  };
 
   return (
     <div>
-      {noExtractedWarning && (
-        <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#92400e" }}>
-          {taskForms.length === 0 && <span>Task forms not found. Click &ldquo;Fetch from Classic&rdquo; in the Task Forms section to load task form data. </span>}
-          {workflows.length === 0 && <span>Workflows not found. Click &ldquo;Fetch from Classic&rdquo; in the Extraction Status card to load workflow data.</span>}
-        </div>
-      )}
 
-      {/* Input form */}
+      {/* ── AI Analysis card ── */}
+      <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, marginBottom: 16, overflow: "hidden" }}>
+        <div style={{ padding: "16px 20px", borderBottom: analysisState !== "idle" ? "1px solid #dde5ef" : "none", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#0f1623" }}>AI-Powered Task Form Parent Assignment</div>
+            <div style={{ fontSize: 13, color: "#627286", marginTop: 3 }}>
+              {unassignedOnly
+                ? "Analyzes Classic workflows to propose parent form assignments for unassigned Adflo task forms."
+                : "Analyzes Classic workflows to propose or update parent form assignments for all Adflo task forms."}
+            </div>
+            {/* Mode toggle */}
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "#8a9bb0", marginRight: 2 }}>Show:</span>
+              {(["unassigned", "all"] as const).map((mode) => {
+                const active = mode === "unassigned" ? unassignedOnly : !unassignedOnly;
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setMode(mode === "unassigned")}
+                    disabled={analysisState === "loading"}
+                    style={{
+                      fontSize: 12, padding: "3px 12px", borderRadius: 999, cursor: "pointer",
+                      border: active ? "1.5px solid #2f6fed" : "1.5px solid #dde5ef",
+                      background: active ? "rgba(47,111,237,0.08)" : "#fff",
+                      color: active ? "#2f6fed" : "#627286",
+                      fontWeight: active ? 600 : 400,
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {mode === "unassigned" ? "Unassigned only" : "All task forms"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <button
+            onClick={runAnalysis}
+            disabled={analysisState === "loading"}
+            style={{ ...primaryBtnStyle, opacity: analysisState === "loading" ? 0.6 : 1 }}
+          >
+            {analysisState === "loading" ? "Analyzing…" : analysisState === "done" ? "Re-run Analysis" : "Run Analysis"}
+          </button>
+        </div>
+
+        {/* Error */}
+        {analysisState === "error" && (
+          <div style={{ padding: "14px 20px", color: "#dc2626", fontSize: 13 }}>
+            Analysis failed: {analysisError}
+          </div>
+        )}
+
+        {/* Summary chips */}
+        {analysisState === "done" && analysisSummary && (
+          <div style={{ padding: "14px 20px", display: "flex", gap: 10, flexWrap: "wrap", borderBottom: proposals.length ? "1px solid #eef3f8" : "none" }}>
+            <Chip value={analysisSummary.totalAnalyzed} label={unassignedOnly ? "unassigned" : "total"} color="#455468" bg="rgba(148,163,184,0.1)" />
+            <Chip value={analysisSummary.proposed}  label="proposed"  color="#2f6fed" bg="rgba(47,111,237,0.10)" />
+            <Chip value={analysisSummary.conflicts} label="conflicts" color="#b45309" bg="rgba(251,191,36,0.12)" />
+            <Chip value={analysisSummary.notFound}  label="not found" color="#64748b" bg="rgba(148,163,184,0.12)" />
+          </div>
+        )}
+
+        {/* Proposals table */}
+        {analysisState === "done" && proposals.length > 0 && (
+          <>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", minWidth: unassignedOnly ? 1000 : 1140, borderCollapse: "collapse", tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: unassignedOnly ? "18%" : "15%" }} />
+                  {!unassignedOnly && <col style={{ width: "16%" }} />}
+                  <col style={{ width: unassignedOnly ? "24%" : "19%" }} />
+                  <col style={{ width: "6%" }} />
+                  <col style={{ width: unassignedOnly ? "22%" : "18%" }} />
+                  <col style={{ width: unassignedOnly ? "30%" : "26%" }} />
+                </colgroup>
+                <thead>
+                  <tr style={{ background: "#f8fafc" }}>
+                    <th style={thStyle}>Task Form</th>
+                    {!unassignedOnly && <th style={thStyle}>Current Parent</th>}
+                    <th style={thStyle}>Proposed Parent</th>
+                    <th style={thStyle}>Conf.</th>
+                    <th style={thStyle}>Reasoning</th>
+                    <th style={thStyle}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proposals.map((p) => {
+                    const approval   = approvalMap[p.taskFormId];
+                    const result     = execResults[p.taskFormId];
+                    const resolution = conflictResolutions[p.taskFormId];
+                    const isAutoApproved = approval === "approved" && p.confidence === "high" && !resolution;
+
+                    // ── Row tint ──
+                    let rowBg = "transparent";
+                    if (result)               rowBg = result.success ? "rgba(34,197,94,0.04)" : "rgba(239,68,68,0.04)";
+                    else if (approval === "approved") rowBg = "rgba(34,197,94,0.04)";
+                    else if (approval === "skipped")  rowBg = "rgba(148,163,184,0.06)";
+
+                    return (
+                      <tr key={p.taskFormId} style={{ borderTop: "1px solid #eef3f8", background: rowBg, verticalAlign: "top" }}>
+
+                        {/* Task Form */}
+                        <td style={{ ...tdStyle, paddingTop: 12 }}>
+                          <div title={p.taskFormName} style={{ fontWeight: 600, color: "#0f1623", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.taskFormName}</div>
+                          <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>#{p.taskFormId}</div>
+                        </td>
+
+                        {/* Current Parent (All task forms mode only) */}
+                        {!unassignedOnly && (
+                          <td style={{ ...tdStyle, paddingTop: 12 }}>
+                            {p.currentParentId ? (
+                              <>
+                                <div title={p.currentParentName ?? undefined} style={{ fontWeight: 500, color: "#0f1623", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.currentParentName ?? "—"}</div>
+                                <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>#{p.currentParentId}</div>
+                              </>
+                            ) : (
+                              <span style={{ fontSize: 12, color: "#94a3b8" }}>None</span>
+                            )}
+                          </td>
+                        )}
+
+                        {/* Proposed Parent / Conflict options */}
+                        <td style={{ ...tdStyle, paddingTop: 12 }}>
+                          {p.status === "conflict" ? (
+                            result ? (
+                              // After execution — show what was picked
+                              <>
+                                <div style={{ fontWeight: 600, color: "#0f1623", fontSize: 13 }}>{resolution?.parentName ?? "—"}</div>
+                                <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>#{resolution?.parentId}</div>
+                              </>
+                            ) : (
+                              // Conflict picker
+                              <div>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: "#b45309", marginBottom: 7, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                  {(p.conflictOptions?.length ?? 0)} options — pick one
+                                </div>
+                                {(p.conflictOptions ?? []).map((opt) => {
+                                  const isSelected = resolution?.parentId === opt.adfloId && !!opt.adfloId;
+                                  const canPick    = !!opt.adfloId;
+                                  return (
+                                    <label
+                                      key={opt.classicProductName}
+                                      style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 6, cursor: canPick ? "pointer" : "default", opacity: canPick ? 1 : 0.5 }}
+                                    >
+                                      <input
+                                        type="radio"
+                                        name={`conflict-${p.taskFormId}`}
+                                        checked={isSelected}
+                                        disabled={!canPick || !!result}
+                                        onChange={() => canPick && resolveConflict(p.taskFormId, opt)}
+                                        style={{ marginTop: 2, accentColor: "#2f6fed", flexShrink: 0 }}
+                                      />
+                                      <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+                                        <span style={{ color: "#627286" }}>{opt.classicProductName}</span>
+                                        {canPick && (
+                                          <>
+                                            <span style={{ color: "#94a3b8" }}> → </span>
+                                            <span style={{ fontWeight: 600, color: "#0f1623" }}>{opt.adfloName}</span>
+                                          </>
+                                        )}
+                                        {!canPick && <span style={{ color: "#94a3b8", fontSize: 11 }}> (no Adflo match)</span>}
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )
+                          ) : p.proposedParentId ? (
+                            <>
+                              <div title={p.proposedParentName ?? undefined} style={{ fontWeight: 600, color: "#0f1623", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.proposedParentName}</div>
+                              <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>#{p.proposedParentId}</div>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 12, color: "#94a3b8" }}>Not found in Classic</span>
+                          )}
+                        </td>
+
+                        {/* Confidence */}
+                        <td style={{ ...tdStyle, paddingTop: 14 }}>{confidenceBadge(p.confidence)}</td>
+
+                        {/* Reasoning */}
+                        <td title={p.reasoning} style={{ ...tdStyle, fontSize: 12, color: "#627286", paddingTop: 12, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const }}>
+                          {p.reasoning}
+                        </td>
+
+                        {/* Action */}
+                        <td style={{ ...tdStyle, paddingTop: 12 }}>
+                          {result ? (
+                            // Execution result
+                            <div>
+                              <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: result.success ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", color: result.success ? "#16a34a" : "#dc2626" }}>
+                                {result.success ? "Done" : "Failed"}
+                              </span>
+                              <div style={{ fontSize: 11, color: "#8a9bb0", marginTop: 4, wordBreak: "break-word" }}>{result.message}</div>
+                            </div>
+
+                          ) : p.status === "conflict" ? (
+                            // Conflict action
+                            approval === "skipped" ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(148,163,184,0.15)", color: "#64748b", alignSelf: "flex-start" }}>Skipped</span>
+                                <button onClick={() => setApproval(p.taskFormId, undefined)} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}>Undo</button>
+                              </div>
+                            ) : resolution ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(34,197,94,0.12)", color: "#16a34a", alignSelf: "flex-start" }}>Approved</span>
+                                <button onClick={() => clearConflict(p.taskFormId)} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}>Change</button>
+                                <button onClick={() => { clearConflict(p.taskFormId); setApproval(p.taskFormId, "skipped"); }} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", color: "#64748b", alignSelf: "flex-start" }}>Skip</button>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                <span style={{ fontSize: 11, color: "#b45309" }}>← Select a parent</span>
+                                <button onClick={() => setApproval(p.taskFormId, "skipped")} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", color: "#64748b", alignSelf: "flex-start" }}>Skip</button>
+                              </div>
+                            )
+
+                          ) : p.status === "not_found" ? (
+                            // Not found — can only skip
+                            approval === "skipped" ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(148,163,184,0.15)", color: "#64748b", alignSelf: "flex-start" }}>Skipped</span>
+                                <button onClick={() => setApproval(p.taskFormId, undefined)} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}>Undo</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setApproval(p.taskFormId, "skipped")} style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 10px", color: "#64748b" }}>Skip</button>
+                            )
+
+                          ) : p.proposedParentId ? (
+                            // Proposed row with a parent ID — full approve/skip
+                            approval === "approved" ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(34,197,94,0.12)", color: "#16a34a", alignSelf: "flex-start" }}>
+                                  {isAutoApproved ? "Auto-approved" : "Approved"}
+                                </span>
+                                <button onClick={() => setApproval(p.taskFormId, undefined)} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}>Undo</button>
+                              </div>
+                            ) : approval === "skipped" ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(148,163,184,0.15)", color: "#64748b", alignSelf: "flex-start" }}>Skipped</span>
+                                <button onClick={() => setApproval(p.taskFormId, undefined)} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}>Undo</button>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button onClick={() => setApproval(p.taskFormId, "approved")} style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 10px", color: "#16a34a", borderColor: "#86efac" }}>Approve</button>
+                                <button onClick={() => setApproval(p.taskFormId, "skipped")} style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 10px", color: "#64748b" }}>Skip</button>
+                              </div>
+                            )
+
+                          ) : (
+                            // Proposed but no Adflo match — skip only
+                            approval === "skipped" ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(148,163,184,0.15)", color: "#64748b", alignSelf: "flex-start" }}>Skipped</span>
+                                <button onClick={() => setApproval(p.taskFormId, undefined)} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}>Undo</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setApproval(p.taskFormId, "skipped")} style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 10px", color: "#64748b" }}>Skip</button>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Execute bar */}
+            <div style={{ padding: "14px 20px", borderTop: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <button
+                onClick={executeApproved}
+                disabled={executing || approvedCount === 0}
+                style={{ ...primaryBtnStyle, opacity: executing || approvedCount === 0 ? 0.5 : 1 }}
+              >
+                {executing ? "Executing…" : `Execute Approved (${approvedCount})`}
+              </button>
+              {executedCount > 0 && (
+                <>
+                  <span style={{ fontSize: 13, color: "#627286" }}>
+                    {Object.values(execResults).filter(r => r.success).length} of {executedCount} succeeded
+                  </span>
+                  <button
+                    onClick={() => {
+                      const rows = proposals
+                        .filter((p) => execResults[p.taskFormId])
+                        .map((p) => {
+                          const r = execResults[p.taskFormId];
+                          return {
+                            entity_type:  "Task Form Parent",
+                            item_name:    p.taskFormName,
+                            item_id:      p.taskFormId,
+                            status:       r.success ? "succeeded" : "failed",
+                            description:  r.message,
+                            http_code:    "",
+                            snippet:      r.message,
+                            timestamp:    new Date().toISOString(),
+                            is_retry:     "no",
+                          };
+                        });
+                      downloadCsv(rows, `reassignment-results-${new Date().toISOString().slice(0, 10)}.csv`);
+                    }}
+                    style={{ ...ghostBtnStyle, fontSize: 12, marginLeft: "auto" }}
+                  >
+                    Export Results
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+
+        {analysisState === "done" && proposals.length === 0 && (
+          <div style={{ padding: "24px 20px", fontSize: 13, color: "#8a9bb0", textAlign: "center" }}>
+            No unassigned task forms found.
+          </div>
+        )}
+      </div>
+
+      {/* ── Manual queue card ── */}
       <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: 20, marginBottom: 16 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "#0f1623", marginBottom: 16 }}>Add Reassignment to Queue</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#0f1623", marginBottom: 4 }}>Manual Reassignment Queue</div>
+        <div style={{ fontSize: 13, color: "#627286", marginBottom: 16 }}>
+          For conflicts or forms not covered by AI analysis — add individual task form reassignments here.
+        </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
           <div>
@@ -847,10 +1498,10 @@ function ReassignmentTab({
             <tbody>
               {queue.map((item, i) => {
                 const si = {
-                  pending: { label: "Pending",   color: "#64748b", bg: "rgba(148,163,184,0.1)" },
-                  running: { label: "Running…",  color: "#2f6fed", bg: "rgba(47,111,237,0.1)" },
-                  done:    { label: "Done",      color: "#16a34a", bg: "rgba(34,197,94,0.1)" },
-                  failed:  { label: "Failed",    color: "#dc2626", bg: "rgba(239,68,68,0.1)" },
+                  pending: { label: "Pending",  color: "#64748b", bg: "rgba(148,163,184,0.1)" },
+                  running: { label: "Running…", color: "#2f6fed", bg: "rgba(47,111,237,0.1)" },
+                  done:    { label: "Done",     color: "#16a34a", bg: "rgba(34,197,94,0.1)" },
+                  failed:  { label: "Failed",   color: "#dc2626", bg: "rgba(239,68,68,0.1)" },
                 }[item.status];
                 return (
                   <tr key={i} style={{ borderTop: "1px solid #eef3f8" }}>

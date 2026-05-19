@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseServer
     .from("migration_runs")
-    .select("entity_type, item_id, status, snippet, run_at")
+    .select("entity_type, item_id, item_name, status, http_code, snippet, run_at, is_retry")
     .eq("instance_id", instanceId)
     .order("run_at", { ascending: false });
 
