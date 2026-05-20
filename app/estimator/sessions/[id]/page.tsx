@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { supabase } from "../../../../lib/supabase";
 
 type SessionRow = {
   id: string;
@@ -41,33 +40,28 @@ export default function SessionDetailPage() {
     const fetchData = async () => {
       if (!sessionId) return;
 
-      const [{ data: sessionData, error: sessionError }, { data: questionData, error: questionError }] =
-        await Promise.all([
-          supabase
-            .from("estimator_submissions")
-            .select("*")
-            .eq("id", sessionId)
-            .single(),
-          supabase
-            .from("estimator_questions")
-            .select("*")
-            .eq("is_active", true)
-            .order("display_order", { ascending: true }),
+      try {
+        const [sessionRes, questionsRes] = await Promise.all([
+          fetch(`/api/estimator/sessions/${sessionId}`),
+          fetch("/api/estimator/questions"),
         ]);
 
-      if (sessionError) {
-        console.error("Error fetching session:", sessionError);
-      } else {
-        setSession(sessionData as SessionRow);
-      }
+        if (sessionRes.ok) {
+          setSession(await sessionRes.json() as SessionRow);
+        } else {
+          console.error("Error fetching session:", await sessionRes.text());
+        }
 
-      if (questionError) {
-        console.error("Error fetching questions:", questionError);
-      } else {
-        setQuestions((questionData as Question[]) || []);
+        if (questionsRes.ok) {
+          setQuestions(await questionsRes.json() as Question[]);
+        } else {
+          console.error("Error fetching questions:", await questionsRes.text());
+        }
+      } catch (err) {
+        console.error("Error fetching data:", err);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     };
 
     fetchData();

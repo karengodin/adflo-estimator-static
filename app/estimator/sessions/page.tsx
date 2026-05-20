@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { supabase } from "../../../lib/supabase";
 
 type SessionRow = {
   id: string;
@@ -24,14 +23,16 @@ export default function EstimatorSessionsPage() {
 
   useEffect(() => {
     const fetchSessions = async () => {
-      const { data, error } = await supabase
-        .from("estimator_submissions")
-        .select("*")
-        .order("updated_at", { ascending: false });
-
-      if (error) console.error("Error fetching sessions:", error);
-      else setSessions((data as SessionRow[]) || []);
-      setLoading(false);
+      try {
+        const res = await fetch("/api/estimator/sessions");
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        setSessions(data as SessionRow[]);
+      } catch (err) {
+        console.error("Error fetching sessions:", err);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchSessions();
   }, []);

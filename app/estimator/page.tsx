@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "../../lib/supabase";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -18,6 +17,17 @@ type Question = {
   display_order: number;
   lever_name?: string | null;
   lever_desc?: string | null;
+  // v2 fields
+  question_type: "yesno" | "number" | "date";
+  conditional_logic: {
+    type: "any_answered_yes_or_nonzero" | "greater_than";
+    sort_orders?: number[];
+    sort_order?: number;
+    value?: number;
+  } | null;
+  is_risk_multiplier: boolean;
+  risk_multiplier_value: number | null;
+  risk_direction: "yes_adds_hours" | "no_adds_risk" | null;
 };
 
 type Session = {
@@ -39,40 +49,193 @@ type Logic = {
   baseHours: number;
   bestCaseMultiplier: number;
   worstCaseMultiplier: number;
-  teamPin: string;
   tiers: { name: string; minHours: number; timeline: string }[];
+  productHourRate: number;
+  connectorHourRate: number;
 };
 
 type Screen = "loading" | "role" | "questionnaire" | "complete" | "team-dashboard" | "team-session";
 
+type SrdData = {
+  engagement_overview: string;
+  customer_objectives: string[];
+  system_architecture: string;
+  in_scope: {
+    narrative: string;
+    hours_breakdown: {
+      form_configuration: { hours: number; detail: string[] };
+      workflow_configuration: { hours: number; detail: string[] };
+      qa: { hours: number; detail: string[] };
+      uat_support: { hours: number; detail: string[] };
+      program_management: { hours: number; detail: string[] };
+      total: number;
+    };
+  };
+  out_of_scope: string[];
+  integration_strategy: string | null;
+  risks_and_flags: string[];
+  meta: {
+    clientName: string | null;
+    repName: string | null;
+    estimatedHours: number;
+    tier: string;
+    generatedAt: string;
+  };
+};
+
+// Team PIN — not stored in DB (internal tool, no auth yet)
+const TEAM_PIN = "1234";
+
 const DEFAULT_LOGIC: Logic = {
-  baseHours: 24,
+  baseHours: 0,
   bestCaseMultiplier: 0.8,
   worstCaseMultiplier: 1.3,
-  teamPin: "1234",
   tiers: [
-    { name: "Bronze", minHours: 0, timeline: "3–5 weeks" },
-    { name: "Silver", minHours: 60, timeline: "5–8 weeks" },
-    { name: "Gold", minHours: 110, timeline: "8–12 weeks" },
-    { name: "Enterprise", minHours: 180, timeline: "12–16 weeks" },
+    { name: "Bronze",     minHours: 0,   timeline: "3–5 weeks" },
+    { name: "Silver",     minHours: 61,  timeline: "5–8 weeks" },
+    { name: "Gold",       minHours: 121, timeline: "8–12 weeks" },
+    { name: "Enterprise", minHours: 201, timeline: "12–16 weeks" },
   ],
+  productHourRate:   4,
+  connectorHourRate: 12,
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function calcHours(questions: Question[], answers: Record<string, string>, logic: Logic, excludeIds: number[] = []) {
-  const excl = new Set(excludeIds);
-  const w = questions.reduce((sum, q) => (!excl.has(q.id) && answers[String(q.id)] === q.trigger ? sum + q.weight : sum), 0);
-  return {
-    expected: Math.round(logic.baseHours + w),
-    best: Math.round(logic.baseHours + w * logic.bestCaseMultiplier),
-    worst: Math.round(logic.baseHours + w * logic.worstCaseMultiplier),
-  };
-}
-
 function getTier(hours: number, logic: Logic) {
   const sorted = [...logic.tiers].sort((a, b) => b.minHours - a.minHours);
   return sorted.find((t) => hours >= t.minHours) || logic.tiers[0];
+}
+
+/** Returns true if the question should be shown given current answers. */
+function isVisible(q: Question, allQuestions: Question[], answers: Record<string, string>): boolean {
+  const cl = q.conditional_logic;
+  if (!cl) return true;
+
+  const bySort = (n: number) => allQuestions.find((x) => x.display_order === n);
+  const isAnsweredYesOrNonzero = (dep: Question) => {
+    const a = answers[String(dep.id)];
+    if (dep.question_type === "number") return parseInt(a || "0", 10) > 0;
+    return a === "Yes";
+  };
+
+  if (cl.type === "any_answered_yes_or_nonzero") {
+    return (cl.sort_orders ?? []).some((so) => {
+      const dep = bySort(so);
+      return dep ? isAnsweredYesOrNonzero(dep) : false;
+    });
+  }
+
+  if (cl.type === "greater_than") {
+    const dep = bySort(cl.sort_order!);
+    if (!dep) return false;
+    const val = parseInt(answers[String(dep.id)] || "0", 10) || 0;
+    return val > (cl.value ?? 0);
+  }
+
+  return true;
+}
+
+type EstResult = {
+  base: number;
+  products: number;
+  connectors: number;
+  subtotal: number;
+  multiplier: number;
+  expected: number;
+  best: number;
+  worst: number;
+  redFlags: string[];
+};
+
+function calcEstimate(questions: Question[], answers: Record<string, string>, logic: Logic): EstResult {
+  const bySort = (n: number) => questions.find((q) => q.display_order === n);
+
+  // 1. Base hours: yesno non-risk questions answered Yes × weight
+  let base = 0;
+  for (const q of questions) {
+    if (q.question_type === "yesno" && !q.is_risk_multiplier && answers[String(q.id)] === "Yes") {
+      base += q.weight;
+    }
+  }
+
+  // 2. Product hours — tiered (Q13), optionally × 1.5 for flights (Q14)
+  const q13 = bySort(13);
+  const q14 = bySort(14);
+  let products = 0;
+  if (q13) {
+    const count = parseInt(answers[String(q13.id)] || "0", 10) || 0;
+    if (count > 0) {
+      const rate = logic.productHourRate ?? 4;
+      let p: number;
+      if (count <= 3)      p = count * rate;
+      else if (count <= 8) p = count * (rate * 0.75);
+      else                 p = count * (rate * 0.5);
+      if (q14 && answers[String(q14.id)] === "Yes") p *= 1.5;
+      products = Math.round(p);
+    }
+  }
+
+  // 3. Push connector hours (Q12 count × connectorHourRate)
+  const q12 = bySort(12);
+  let connectors = 0;
+  if (q12) {
+    const count = parseInt(answers[String(q12.id)] || "0", 10) || 0;
+    connectors = count * (logic.connectorHourRate ?? 12);
+  }
+
+  const subtotal = base + products + connectors;
+
+  // 4. Org readiness multipliers (stack multiplicatively)
+  const q23 = bySort(23); const q24 = bySort(24);
+  const q25 = bySort(25); const q26 = bySort(26);
+
+  const hasIntegrations = questions
+    .filter((q) => q.display_order >= 7 && q.display_order <= 12)
+    .some((q) => {
+      const a = answers[String(q.id)];
+      return q.question_type === "number" ? parseInt(a || "0", 10) > 0 : a === "Yes";
+    });
+
+  let multiplier = 1.0;
+  if (q23 && answers[String(q23.id)] === "No") multiplier *= 1.15;
+  if (q24 && answers[String(q24.id)] === "No") multiplier *= 1.10;
+  if (q25 && answers[String(q25.id)] === "No") multiplier *= 1.20;
+  if (q26 && answers[String(q26.id)] === "No" && hasIntegrations) multiplier *= 1.10;
+
+  const expected = Math.round(subtotal * multiplier);
+
+  // 5. Red flags
+  const redFlags: string[] = [];
+  if (q23 && answers[String(q23.id)] === "No")
+    redFlags.push("No dedicated implementation lead — timeline risk (+15%)");
+  if (q24 && answers[String(q24.id)] === "No")
+    redFlags.push("Workflows not documented — discovery phase required (+10%)");
+  if (q25 && answers[String(q25.id)] === "No")
+    redFlags.push("Stakeholders not aligned on workflows — scope risk (+20%)");
+  if (q26 && answers[String(q26.id)] === "No" && hasIntegrations)
+    redFlags.push("No technical resource for integrations — delivery risk (+10%)");
+
+  const q27 = bySort(27);
+  if (q27 && answers[String(q27.id)]) {
+    const goLive = new Date(answers[String(q27.id)]);
+    const eightWeeks = new Date(Date.now() + 8 * 7 * 24 * 60 * 60 * 1000);
+    if (goLive < eightWeeks) {
+      redFlags.push(`Target go-live ${answers[String(q27.id)]} is aggressive (under 8 weeks)`);
+    }
+  }
+
+  return {
+    base,
+    products,
+    connectors,
+    subtotal,
+    multiplier,
+    expected,
+    best:  Math.round(expected * (logic.bestCaseMultiplier ?? 0.8)),
+    worst: Math.round(expected * (logic.worstCaseMultiplier ?? 1.3)),
+    redFlags,
+  };
 }
 
 function getTierStyle(tierName: string): React.CSSProperties {
@@ -130,29 +293,33 @@ export default function EstimatorPage() {
   const [isSavingLogic, setIsSavingLogic] = useState(false);
   
   // SRD
-  const [srdData, setSrdData] = useState({ executiveSummary: "", objectives: "", outOfScope: "", nextSteps: "" });
+  const [srdData, setSrdData] = useState<SrdData | null>(null);
+  const [srdGenerating, setSrdGenerating] = useState(false);
+  const [srdExporting, setSrdExporting] = useState(false);
+  const [srdError, setSrdError] = useState<string | null>(null);
+
+  // Share link
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareLink, setShareLink] = useState<string | null>(null);
+  const [shareGenerating, setShareGenerating] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   // ── Load questions & logic on mount ──
   useEffect(() => {
     const init = async () => {
-      const [{ data: qData }, { data: lData }] = await Promise.all([
-        supabase.from("estimator_questions").select("*").eq("is_active", true).order("display_order"),
-        supabase.from("estimator_logic").select("*").eq("id", "global").single(),
+      const [qRes, lRes] = await Promise.all([
+        fetch("/api/estimator/questions"),
+        fetch("/api/estimator/logic"),
       ]);
-     if (qData) {
-  setQuestions(qData as Question[]);
-  setQuestionsEdit(qData as Question[]);
-}
-      if (lData) {
-        const l: Logic = {
-          baseHours: lData.base_hours ?? 24,
-          bestCaseMultiplier: lData.best_case_multiplier ?? 0.8,
-          worstCaseMultiplier: lData.worst_case_multiplier ?? 1.3,
-          teamPin: lData.team_pin ?? "1234",
-          tiers: lData.tiers ?? DEFAULT_LOGIC.tiers,
-        };
-        setLogic(l);
-        setLogicEdit(l);
+      if (qRes.ok) {
+        const qData: Question[] = await qRes.json();
+        setQuestions(qData);
+        setQuestionsEdit(qData);
+      }
+      if (lRes.ok) {
+        const lData: Logic = await lRes.json();
+        setLogic(lData);
+        setLogicEdit(lData);
       }
       setScreen("role");
     };
@@ -160,10 +327,14 @@ export default function EstimatorPage() {
   }, []);
 
   // ── Derived values ──
-  const est = useMemo(() => calcHours(questions, answers, logic, activatedLevers), [questions, answers, logic, activatedLevers]);
+  const est = useMemo(() => calcEstimate(questions, answers, logic), [questions, answers, logic]);
   const currentTier = useMemo(() => getTier(est.expected, logic), [est.expected, logic]);
-  const answeredCount = Object.keys(answers).length;
-  const categories = useMemo(() => [...new Set(questions.map((q) => q.category))], [questions]);
+  const visibleQuestions = useMemo(() => questions.filter((q) => isVisible(q, questions, answers)), [questions, answers]);
+  const answeredCount = useMemo(
+    () => visibleQuestions.filter((q) => answers[String(q.id)] !== undefined && answers[String(q.id)] !== "").length,
+    [visibleQuestions, answers]
+  );
+  const categories = useMemo(() => [...new Set(visibleQuestions.map((q) => q.category))], [visibleQuestions]);
   const blockers = useMemo(() => questions.filter((q) => q.blocker && answers[String(q.id)] === q.trigger), [questions, answers]);
   const sowItems = useMemo(() => questions.filter((q) => q.sow && answers[String(q.id)] === q.trigger), [questions, answers]);
   const levers = useMemo(() => questions.filter((q) => q.can_remove && answers[String(q.id)] === q.trigger).sort((a, b) => b.weight - a.weight), [questions, answers]);
@@ -185,17 +356,19 @@ export default function EstimatorPage() {
   const persistSession = async () => {
     if (!currentSession) return;
     const t = getTier(est.expected, logic);
-    await supabase.from("estimator_submissions").update({
-      company_name: companyName || "Untitled",
-      primary_contact: contactName || null,
-      notes: notes || null,
-      answers,
-      activated_levers: activatedLevers,
-      estimated_hours: est.expected,
-      tier: t.name,
-      timeline: t.timeline,
-      updated_at: new Date().toISOString(),
-    }).eq("id", currentSession.id);
+    await fetch(`/api/estimator/sessions/${currentSession.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        company_name:     companyName || "Untitled",
+        primary_contact:  contactName || null,
+        notes:            notes || null,
+        answers,
+        activated_levers: activatedLevers,
+        estimated_hours:  est.expected,
+        tier:             t.name,
+      }),
+    });
     setSaveStatus("saved");
     setTimeout(() => setSaveStatus(""), 2000);
   };
@@ -212,21 +385,21 @@ export default function EstimatorPage() {
 
   // ── Load sessions for team dashboard ──
   const loadSessions = async () => {
-    const { data } = await supabase.from("estimator_submissions").select("*").order("updated_at", { ascending: false });
-    setSessions((data as Session[]) || []);
+    const res = await fetch("/api/estimator/sessions");
+    setSessions(res.ok ? await res.json() : []);
   };
 
   const loadHistory = async () => {
-    const { data } = await supabase.from("estimator_history").select("*").order("date_completed", { ascending: false });
-    setHistory(data || []);
+    const res = await fetch("/api/estimator/history");
+    setHistory(res.ok ? await res.json() : []);
   };
 
   // ── Open session ──
   const openSession = async (id: string) => {
     setScreen("loading");
-    const { data } = await supabase.from("estimator_submissions").select("*").eq("id", id).single();
-    if (!data) { setScreen("team-dashboard"); return; }
-    const s = data as Session;
+    const res = await fetch(`/api/estimator/sessions/${id}`);
+    if (!res.ok) { setScreen("team-dashboard"); return; }
+    const s: Session = await res.json();
     setCurrentSession(s);
     setAnswers(s.answers || {});
     setActivatedLevers(s.activated_levers || []);
@@ -242,23 +415,30 @@ export default function EstimatorPage() {
     if (!newSessionName.trim()) { setNewSessionError("Please enter a client name."); return; }
     setNewSessionSaving(true);
     try {
-      const { data, error } = await supabase.from("estimator_submissions").insert({
-        company_name: newSessionName.trim(),
-        primary_contact: newSessionRep.trim() || null,
-        answers: {},
-        activated_levers: [],
-        estimated_hours: logic.baseHours,
-        tier: "Bronze",
-        timeline: logic.tiers[0]?.timeline || "3–5 weeks",
-        status: "draft",
-      }).select().single();
-      if (error) throw error;
+      const res = await fetch("/api/estimator/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_name:     newSessionName.trim(),
+          primary_contact:  newSessionRep.trim() || null,
+          answers:          {},
+          activated_levers: [],
+          estimated_hours:  logic.baseHours,
+          tier:             "Bronze",
+          status:           "draft",
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Error creating session");
+      }
+      const data: Session = await res.json();
       setNewSessionOpen(false);
       setNewSessionName("");
       setNewSessionRep("");
-      await openSession((data as Session).id);
-    } catch (e: any) {
-      setNewSessionError(e.message || "Error creating session");
+      await openSession(data.id);
+    } catch (e: unknown) {
+      setNewSessionError(e instanceof Error ? e.message : "Error creating session");
     } finally {
       setNewSessionSaving(false);
     }
@@ -268,17 +448,24 @@ export default function EstimatorPage() {
   const submitClient = async () => {
     if (!currentSession) return;
     const t = getTier(est.expected, logic);
-    await supabase.from("estimator_submissions").update({
-      answers, estimated_hours: est.expected, tier: t.name, timeline: t.timeline,
-      company_name: companyName, primary_contact: contactName, status: "submitted",
-      updated_at: new Date().toISOString(),
-    }).eq("id", currentSession.id);
+    await fetch(`/api/estimator/sessions/${currentSession.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        answers,
+        estimated_hours: est.expected,
+        tier:            t.name,
+        company_name:    companyName,
+        primary_contact: contactName,
+        status:          "submitted",
+      }),
+    });
     setScreen("complete");
   };
 
   // ── PIN ──
   const verifyPin = () => {
-    if (pinValue === (logic.teamPin || "1234")) {
+    if (pinValue === TEAM_PIN) {
       setPinOpen(false); setPinValue(""); setPinError("");
       loadSessions(); loadHistory();
       setScreen("team-dashboard");
@@ -302,6 +489,11 @@ const addQuestion = () => {
         sow: false,
         is_active: true,
         display_order: prev.length + 1,
+        question_type: "yesno" as const,
+        conditional_logic: null,
+        is_risk_multiplier: false,
+        risk_multiplier_value: null,
+        risk_direction: null,
       },
     ];
 
@@ -344,68 +536,127 @@ const moveQuestion = (index: number, direction: "up" | "down") => {
 const saveLogic = async () => {
   setIsSavingLogic(true);
 
-  const { error: logicError } = await supabase.from("estimator_logic").upsert({
-    id: "global",
-    base_hours: logicEdit.baseHours,
-    best_case_multiplier: logicEdit.bestCaseMultiplier,
-    worst_case_multiplier: logicEdit.worstCaseMultiplier,
-    team_pin: logicEdit.teamPin,
-    tiers: logicEdit.tiers,
+  // 1. Save logic settings
+  const logicRes = await fetch("/api/estimator/logic", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(logicEdit),
   });
-
-  if (logicError) {
-    console.error("Logic save error:", logicError);
-    alert(`Logic save error: ${logicError.message}`);
+  if (!logicRes.ok) {
+    const err = await logicRes.json();
+    console.error("Logic save error:", err);
+    alert(`Logic save error: ${err.error || "Unknown error"}`);
     setIsSavingLogic(false);
     return;
   }
 
+  // 2. Reconcile questions (API deletes removed IDs then upserts remainder)
   const existingIds = questions.map((q) => q.id);
-  const editedIds = questionsEdit.map((q) => q.id);
-  const idsToDelete = existingIds.filter((id) => !editedIds.includes(id));
+  const editedIds   = questionsEdit.map((q) => q.id);
+  const deleteIds   = existingIds.filter((id) => !editedIds.includes(id));
 
-  for (const id of idsToDelete) {
-    await supabase.from("estimator_questions").delete().eq("id", id);
+  const questionsRes = await fetch("/api/estimator/questions", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ questions: questionsEdit, deleteIds }),
+  });
+  if (!questionsRes.ok) {
+    const err = await questionsRes.json();
+    console.error("Questions save error:", err);
+    alert(`Question save error: ${err.error || "Unknown error"}`);
+    setIsSavingLogic(false);
+    return;
   }
-
-const payload = questionsEdit.map((q, i) => ({
-  id: q.id,
-  category: q.category,
-  question: q.question,
-  trigger: q.trigger,
-  weight: q.weight,
-  can_remove: q.can_remove,
-  blocker: q.blocker,
-  sow: q.sow,
-  is_active: q.is_active,
-  display_order: i + 1,
-}));
-
-const { error: questionsError } = await supabase
-  .from("estimator_questions")
-  .upsert(payload);
-
-if (questionsError) {
-  console.error("Question save error:", questionsError);
-  alert(`Question save error: ${questionsError.message}`);
-  setIsSavingLogic(false);
-  return;
-}
 
   setLogic(logicEdit);
   setQuestions(questionsEdit);
   setIsSavingLogic(false);
   alert("Logic saved");
 };
+  // ── Generate SRD ──
+  const generateSrd = async () => {
+    if (!currentSession) return;
+    setSrdGenerating(true);
+    setSrdError(null);
+    await persistSession();
+    try {
+      const res = await fetch("/api/estimator/generate-srd", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: currentSession.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setSrdError(data.error || "Generation failed"); return; }
+      setSrdData(data as SrdData);
+    } catch (e: unknown) {
+      setSrdError(e instanceof Error ? e.message : "Generation failed");
+    } finally {
+      setSrdGenerating(false);
+    }
+  };
+
+  const exportSrd = async () => {
+    if (!srdData) return;
+    setSrdExporting(true);
+    try {
+      const res = await fetch("/api/estimator/export-srd", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(srdData),
+      });
+      if (!res.ok) { alert("Export failed"); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const name = srdData.meta?.clientName || "Client";
+      a.href = url;
+      a.download = `SRD-${name.replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setSrdExporting(false);
+    }
+  };
+
+  // ── Generate share link ──
+  const generateShareLink = async () => {
+    if (!currentSession) return;
+    setShareGenerating(true);
+    try {
+      const res = await fetch("/api/estimator/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: currentSession.id }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setShareLink(data.url);
+        setShareCopied(false);
+        setShareModalOpen(true);
+      }
+    } finally {
+      setShareGenerating(false);
+    }
+  };
+
   // ── Start client flow ──
   const startClientFlow = async () => {
     setScreen("loading");
-    const { data, error } = await supabase.from("estimator_submissions").insert({
-      answers: {}, activated_levers: [], estimated_hours: logic.baseHours,
-      tier: "Bronze", timeline: logic.tiers[0]?.timeline || "3–5 weeks", status: "draft",
-    }).select().single();
-    if (error || !data) { setScreen("role"); return; }
-    setCurrentSession(data as Session);
+    const res = await fetch("/api/estimator/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        company_name:     "",
+        answers:          {},
+        activated_levers: [],
+        estimated_hours:  logic.baseHours,
+        tier:             "Bronze",
+        status:           "draft",
+      }),
+    });
+    if (!res.ok) { setScreen("role"); return; }
+    const data: Session = await res.json();
+    setCurrentSession(data);
     setAnswers({});
     setActivatedLevers([]);
     setCompanyName("");
@@ -485,8 +736,8 @@ if (questionsError) {
           </div>
           <div style={{ padding: "14px 16px", flex: 1, overflowY: "auto" }}>
             {categories.map((cat) => {
-              const qs = questions.filter((q) => q.category === cat);
-              const done = qs.filter((q) => answers[String(q.id)]).length;
+              const qs = visibleQuestions.filter((q) => q.category === cat);
+              const done = qs.filter((q) => answers[String(q.id)] !== undefined && answers[String(q.id)] !== "").length;
               const cls = done === qs.length ? "#4fbf9f" : done > 0 ? "#b7791f" : "#d0daea";
               return (
                 <div key={cat} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid #e8edf4", fontSize: 13, color: "#455468" }}>
@@ -520,18 +771,32 @@ if (questionsError) {
           {categories.map((cat) => (
             <div key={cat} style={{ marginBottom: 28 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>{cat}</div>
-              {questions.filter((q) => q.category === cat).map((q) => {
-                const a = answers[String(q.id)];
+              {visibleQuestions.filter((q) => q.category === cat).map((q) => {
+                const a = answers[String(q.id)] ?? "";
+                const hasAnswer = a !== "";
                 return (
-                  <div key={q.id} style={{ background: a === q.trigger ? "#eaf1ff" : "#fff", border: `1px solid ${a === q.trigger ? "#cddcff" : "#dde5ef"}`, borderRadius: 14, padding: "16px 18px", marginBottom: 10, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.04)", transition: "all 0.15s" }}>
+                  <div key={q.id} style={{ background: hasAnswer ? "#f6fbf8" : "#fff", border: `1px solid ${hasAnswer ? "#cfe7d7" : "#dde5ef"}`, borderRadius: 14, padding: "16px 18px", marginBottom: 10, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.04)", transition: "all 0.15s" }}>
                     <div style={{ fontSize: 14, color: "#0f1623", lineHeight: 1.55, fontWeight: 500 }}>{q.question}</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {["Yes", "No"].map((opt) => (
-                        <button key={opt} type="button" onClick={() => setAnswer(q.id, opt)}
-                          style={{ padding: "8px 18px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${a === opt ? (opt === "Yes" ? "#1f9d55" : "#c94b4b") : "#dde5ef"}`, background: a === opt ? (opt === "Yes" ? "#1f9d55" : "#c94b4b") : "#f8fafc", color: a === opt ? "#fff" : "#627286", transition: "all 0.15s", fontFamily: "inherit" }}>
-                          {opt}
-                        </button>
-                      ))}
+                    <div>
+                      {q.question_type === "number" && (
+                        <input type="number" min={0} value={a} onChange={(e) => setAnswer(q.id, e.target.value)}
+                          placeholder="0"
+                          style={{ width: 80, padding: "8px 12px", borderRadius: 10, border: "1.5px solid #dde5ef", fontSize: 15, fontWeight: 600, fontFamily: "inherit", textAlign: "center", outline: "none", background: "#f8fafc" }} />
+                      )}
+                      {q.question_type === "date" && (
+                        <input type="date" value={a} onChange={(e) => setAnswer(q.id, e.target.value)}
+                          style={{ padding: "8px 12px", borderRadius: 10, border: "1.5px solid #dde5ef", fontSize: 13, fontFamily: "inherit", outline: "none", background: "#f8fafc" }} />
+                      )}
+                      {q.question_type === "yesno" && (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          {["Yes", "No"].map((opt) => (
+                            <button key={opt} type="button" onClick={() => setAnswer(q.id, opt)}
+                              style={{ padding: "8px 18px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${a === opt ? (opt === "Yes" ? "#1f9d55" : "#c94b4b") : "#dde5ef"}`, background: a === opt ? (opt === "Yes" ? "#1f9d55" : "#c94b4b") : "#f8fafc", color: a === opt ? "#fff" : "#627286", transition: "all 0.15s", fontFamily: "inherit" }}>
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -699,7 +964,7 @@ if (questionsError) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
               <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: 20 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Base Settings</div>
-                {[{ label: "Base Hours", key: "baseHours", unit: "hrs" }, { label: "Best Case", key: "bestCaseMultiplier", unit: "×" }, { label: "Worst Case", key: "worstCaseMultiplier", unit: "×" }].map(({ label, key, unit }) => (
+                {[{ label: "Base Hours", key: "baseHours", unit: "hrs" }, { label: "Best Case", key: "bestCaseMultiplier", unit: "×" }, { label: "Worst Case", key: "worstCaseMultiplier", unit: "×" }, { label: "Product Rate", key: "productHourRate", unit: "hrs" }, { label: "Connector Rate", key: "connectorHourRate", unit: "hrs" }].map(({ label, key, unit }) => (
                   <div key={key} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                     <span style={{ fontSize: 13, color: "#455468", flex: 1 }}>{label}</span>
                     <input type="number" value={(logicEdit as any)[key]} onChange={(e) => setLogicEdit((prev) => ({ ...prev, [key]: parseFloat(e.target.value) }))} style={{ ...logicInputStyle }} />
@@ -877,9 +1142,39 @@ if (questionsError) {
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#8a9bb0" }}>
               <span>Timeline: {currentTier.timeline}</span>
-              <span>{answeredCount}/{questions.length}</span>
+              <span>{answeredCount}/{visibleQuestions.length}</span>
+            </div>
+            {/* Hours breakdown */}
+            <div style={{ marginTop: 12, display: "grid", gap: 3 }}>
+              {[
+                { label: "Base",       value: est.base },
+                { label: "Products",   value: est.products },
+                { label: "Connectors", value: est.connectors },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#8a9bb0" }}>
+                  <span>{label}</span><span>{value} hrs</span>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#455468", fontWeight: 600, borderTop: "1px solid #dde5ef", paddingTop: 3, marginTop: 2 }}>
+                <span>Subtotal</span><span>{est.subtotal} hrs</span>
+              </div>
+              {est.multiplier > 1 && (
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#b7791f", fontWeight: 700 }}>
+                  <span>Risk ×</span><span>{est.multiplier.toFixed(2)}</span>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Red flags */}
+          {est.redFlags.length > 0 && (
+            <div style={{ padding: "12px 16px", background: "#fff8e8", borderBottom: "1px solid #f3e0a3" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#8a6417", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>⚠️ Risk Flags</div>
+              {est.redFlags.map((flag, i) => (
+                <div key={i} style={{ fontSize: 11, color: "#8a6417", marginBottom: 4, lineHeight: 1.4 }}>• {flag}</div>
+              ))}
+            </div>
+          )}
 
           {/* Top levers */}
           <div style={{ padding: "14px 16px", borderBottom: "1px solid #dde5ef" }}>
@@ -918,6 +1213,12 @@ if (questionsError) {
                 {t === "questionnaire" ? "Questionnaire" : t === "levers" ? "🎛 Levers" : "📄 SRD"}
               </button>
             ))}
+            <button
+              onClick={generateShareLink}
+              disabled={shareGenerating}
+              style={{ marginLeft: "auto", padding: "7px 14px", borderRadius: 10, border: "1px solid #cddcff", background: "#eaf1ff", color: "#2f6fed", fontWeight: 700, cursor: shareGenerating ? "default" : "pointer", fontSize: 12.5, fontFamily: "inherit" }}>
+              {shareGenerating ? "Generating…" : "🔗 Share with Client"}
+            </button>
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", padding: "32px 40px 48px" }}>
@@ -934,29 +1235,54 @@ if (questionsError) {
                 {categories.map((cat) => (
                   <div key={cat} style={{ marginBottom: 28 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>{cat}</div>
-                    {questions.filter((q) => q.category === cat).map((q) => {
-                      const a = answers[String(q.id)];
-                      const triggered = a === q.trigger;
+                    {visibleQuestions.filter((q) => q.category === cat).map((q) => {
+                      const a = answers[String(q.id)] ?? "";
+                      const triggered = q.question_type === "yesno" ? a === q.trigger : a !== "";
                       const levered = activatedLevers.includes(q.id);
                       return (
                         <div key={q.id} style={{ background: triggered ? "#eaf1ff" : "#fff", border: `1px solid ${triggered ? "#cddcff" : "#dde5ef"}`, borderRadius: 14, padding: "16px 18px", marginBottom: 10, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 16 }}>
                           <div>
                             <div style={{ fontSize: 14, color: "#0f1623", lineHeight: 1.55, fontWeight: 500 }}>{q.question}</div>
                             <div style={{ fontSize: 11, color: "#8a9bb0", marginTop: 5, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                              <span>{q.weight} hrs</span>
-                              {triggered && <span style={{ color: "#2f6fed", fontWeight: 700 }}>↑ adds hours</span>}
+                              {q.weight > 0 && <span>{q.weight} hrs</span>}
+                              {q.is_risk_multiplier && a === "Yes" && (
+                                <span style={{ color: "#1f9d55", fontWeight: 700 }}>✓ no risk</span>
+                              )}
+                              {q.is_risk_multiplier && a === "No" && (
+                                <span style={{ color: "#b7791f", fontWeight: 700 }}>⚠ risk ×{q.risk_multiplier_value}</span>
+                              )}
+                              {q.is_risk_multiplier && a !== "Yes" && a !== "No" && (
+                                <span style={{ color: "#8a9bb0" }}>risk ×{q.risk_multiplier_value}</span>
+                              )}
+                              {q.question_type === "date" && a && new Date(a) < new Date(Date.now() + 8 * 7 * 24 * 60 * 60 * 1000) && (
+                                <span style={{ color: "#dc2626", fontWeight: 700 }}>⚠ aggressive timeline</span>
+                              )}
+                              {triggered && q.weight > 0 && <span style={{ color: "#2f6fed", fontWeight: 700 }}>↑ adds hours</span>}
                               {q.blocker && triggered && <span style={{ color: "#dc2626", fontWeight: 700 }}>🔴 Blocker</span>}
                               {q.sow && triggered && <span style={{ color: "#b7791f", fontWeight: 700 }}>📋 SOW</span>}
                               {levered && <span style={{ color: "#1f9d55", fontWeight: 700 }}>✓ Levered out</span>}
                             </div>
                           </div>
-                          <div style={{ display: "flex", gap: 8 }}>
-                            {["Yes", "No"].map((opt) => (
-                              <button key={opt} type="button" onClick={() => setAnswer(q.id, opt)}
-                                style={{ padding: "8px 18px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${a === opt ? (opt === "Yes" ? "#1f9d55" : "#c94b4b") : "#dde5ef"}`, background: a === opt ? (opt === "Yes" ? "#1f9d55" : "#c94b4b") : "#f8fafc", color: a === opt ? "#fff" : "#627286", fontFamily: "inherit" }}>
-                                {opt}
-                              </button>
-                            ))}
+                          <div>
+                            {q.question_type === "number" && (
+                              <input type="number" min={0} value={a} onChange={(e) => setAnswer(q.id, e.target.value)}
+                                placeholder="0"
+                                style={{ width: 80, padding: "8px 12px", borderRadius: 10, border: "1.5px solid #dde5ef", fontSize: 15, fontWeight: 600, fontFamily: "inherit", textAlign: "center", outline: "none", background: "#f8fafc" }} />
+                            )}
+                            {q.question_type === "date" && (
+                              <input type="date" value={a} onChange={(e) => setAnswer(q.id, e.target.value)}
+                                style={{ padding: "8px 12px", borderRadius: 10, border: "1.5px solid #dde5ef", fontSize: 13, fontFamily: "inherit", outline: "none", background: "#f8fafc" }} />
+                            )}
+                            {q.question_type === "yesno" && (
+                              <div style={{ display: "flex", gap: 8 }}>
+                                {["Yes", "No"].map((opt) => (
+                                  <button key={opt} type="button" onClick={() => setAnswer(q.id, opt)}
+                                    style={{ padding: "8px 18px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${a === opt ? (opt === "Yes" ? "#1f9d55" : "#c94b4b") : "#dde5ef"}`, background: a === opt ? (opt === "Yes" ? "#1f9d55" : "#c94b4b") : "#f8fafc", color: a === opt ? "#fff" : "#627286", fontFamily: "inherit" }}>
+                                    {opt}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -1005,32 +1331,176 @@ if (questionsError) {
             {/* SRD tab */}
             {activeTab === "srd" && (
               <>
-                <div style={{ marginBottom: 24 }}>
-                  <h2 style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", color: "#0f1623", marginBottom: 6 }}>SRD Generator</h2>
-                  <p style={{ fontSize: 14, color: "#627286" }}>Auto-populated from answers — edit then export.</p>
-                </div>
-                {[{ key: "executiveSummary", label: "Executive Summary", rows: 4 }, { key: "objectives", label: "Business Objectives", rows: 4 }, { key: "outOfScope", label: "Out of Scope", rows: 3 }, { key: "nextSteps", label: "Next Steps", rows: 3 }].map(({ key, label, rows }) => (
-                  <div key={key} style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 18, padding: 22, marginBottom: 18 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>{label}</div>
-                    <textarea value={(srdData as any)[key]} onChange={(e) => setSrdData((prev) => ({ ...prev, [key]: e.target.value }))} rows={rows} style={{ width: "100%", background: "#f8fafc", border: "1px solid #dde5ef", borderRadius: 12, color: "#0f1623", fontFamily: "inherit", fontSize: 13, padding: "12px 14px", outline: "none", resize: "vertical" }} />
+                {/* Header row */}
+                <div style={{ marginBottom: 24, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                  <div>
+                    <h2 style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", color: "#0f1623", marginBottom: 6 }}>SRD Generator</h2>
+                    <p style={{ fontSize: 14, color: "#627286" }}>
+                      {srdData
+                        ? `Generated ${new Date(srdData.meta.generatedAt).toLocaleString()} · ${srdData.meta.estimatedHours} hrs · ${srdData.meta.tier}`
+                        : "Generates a full Solutions Requirements Definition from the questionnaire answers."}
+                    </p>
                   </div>
-                ))}
-                {/* Estimate summary */}
-                <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 18, padding: 22, marginBottom: 18 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Estimate Summary</div>
-                  <div style={{ display: "grid", gap: 8, fontSize: 14 }}>
-                    {[["Client", companyName || "—"], ["Estimated Hours", `${est.expected} hrs`], ["Tier", currentTier.name], ["Timeline", currentTier.timeline], ["Blockers", String(blockers.length)], ["SOW Items", String(sowItems.length)]].map(([k, v]) => (
-                      <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #edf2f7" }}>
-                        <span style={{ color: "#627286" }}>{k}</span>
-                        <span style={{ fontWeight: 600, color: "#0f1623" }}>{v}</span>
+                  <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+                    <button onClick={generateSrd} disabled={srdGenerating || !currentSession}
+                      style={{ ...primaryBtnStyle, background: srdGenerating ? "#8a9bb0" : "#2f6fed" }}>
+                      {srdGenerating ? "Generating…" : srdData ? "Re-generate" : "Generate SRD"}
+                    </button>
+                    {srdData && (
+                      <button onClick={exportSrd} disabled={srdExporting} style={outlineBtnStyle}>
+                        {srdExporting ? "Exporting…" : "Export to Word"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Error */}
+                {srdError && (
+                  <div style={{ marginBottom: 20, padding: "14px 18px", background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 12, color: "#991b1b", fontSize: 13 }}>
+                    {srdError}
+                  </div>
+                )}
+
+                {/* Empty state */}
+                {!srdData && !srdGenerating && (
+                  <div style={{ padding: "64px 0", textAlign: "center", color: "#8a9bb0" }}>
+                    <div style={{ fontSize: 36, marginBottom: 16 }}>📄</div>
+                    <div style={{ fontWeight: 700, color: "#455468", marginBottom: 8, fontSize: 16 }}>No SRD generated yet</div>
+                    <div style={{ fontSize: 14, marginBottom: 24 }}>
+                      Answer questionnaire questions, then click Generate SRD to create a client-ready document.
+                    </div>
+                    <button onClick={generateSrd} disabled={!currentSession} style={primaryBtnStyle}>Generate SRD</button>
+                  </div>
+                )}
+
+                {/* Loading skeleton */}
+                {srdGenerating && (
+                  <div style={{ padding: "48px 0", textAlign: "center" }}>
+                    <div style={spinnerStyle} />
+                    <div style={{ marginTop: 16, fontSize: 14, color: "#627286" }}>Calling Claude to generate SRD…</div>
+                  </div>
+                )}
+
+                {/* SRD content */}
+                {srdData && !srdGenerating && (
+                  <div style={{ display: "grid", gap: 18 }}>
+
+                    {/* Risks banner — show prominently if present */}
+                    {srdData.risks_and_flags.length > 0 && (
+                      <div style={{ background: "#fff8e8", border: "1px solid #f3e0a3", borderRadius: 16, padding: "16px 20px" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#8a6417", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>⚠️ Risks & Scope Flags</div>
+                        {srdData.risks_and_flags.map((r, i) => (
+                          <div key={i} style={{ fontSize: 13, color: "#8a6417", paddingLeft: 14, position: "relative", marginBottom: 6 }}>
+                            <span style={{ position: "absolute", left: 0 }}>•</span>{r}
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
+
+                    {/* Engagement Overview */}
+                    <SrdSection title="Engagement Overview">
+                      <p style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, margin: 0 }}>{srdData.engagement_overview}</p>
+                    </SrdSection>
+
+                    {/* Customer Objectives */}
+                    <SrdSection title="Customer Objectives">
+                      <ul style={{ margin: 0, paddingLeft: 20 }}>
+                        {srdData.customer_objectives.map((obj, i) => (
+                          <li key={i} style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, marginBottom: 4 }}>{obj}</li>
+                        ))}
+                      </ul>
+                    </SrdSection>
+
+                    {/* System Architecture */}
+                    <SrdSection title="System Architecture">
+                      <p style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, margin: 0 }}>{srdData.system_architecture}</p>
+                    </SrdSection>
+
+                    {/* In Scope */}
+                    <SrdSection title="In Scope">
+                      <p style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, marginBottom: 18 }}>{srdData.in_scope.narrative}</p>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Hours Breakdown</div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ background: "#1f3a6e" }}>
+                            {["Category", "Hours", "Details"].map((h) => (
+                              <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: "#fff", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(["form_configuration", "workflow_configuration", "qa", "uat_support", "program_management"] as const).map((key, i) => {
+                            const labels: Record<string, string> = { form_configuration: "Form Configuration", workflow_configuration: "Workflow Configuration", qa: "QA", uat_support: "UAT Support", program_management: "Program Management" };
+                            const item = srdData.in_scope.hours_breakdown[key];
+                            return (
+                              <tr key={key} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                                <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontWeight: 500, color: "#0f1623" }}>{labels[key]}</td>
+                                <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "#2f6fed" }}>{item.hours} hrs</td>
+                                <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", color: "#627286", fontSize: 12 }}>{item.detail.join(" · ")}</td>
+                              </tr>
+                            );
+                          })}
+                          <tr style={{ background: "#eaf1ff" }}>
+                            <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1f3a6e" }}>TOTAL</td>
+                            <td style={{ padding: "10px 14px", fontWeight: 800, color: "#1f3a6e", fontVariantNumeric: "tabular-nums" }}>{srdData.in_scope.hours_breakdown.total} hrs</td>
+                            <td style={{ padding: "10px 14px" }}></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </SrdSection>
+
+                    {/* Out of Scope */}
+                    <SrdSection title="Out of Scope">
+                      <ul style={{ margin: 0, paddingLeft: 20 }}>
+                        {srdData.out_of_scope.map((item, i) => (
+                          <li key={i} style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, marginBottom: 4 }}>{item}</li>
+                        ))}
+                      </ul>
+                    </SrdSection>
+
+                    {/* Integration Strategy — only if present */}
+                    {srdData.integration_strategy && (
+                      <SrdSection title="Integration Strategy">
+                        <p style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, margin: 0 }}>{srdData.integration_strategy}</p>
+                      </SrdSection>
+                    )}
+
+                    {/* Export CTA */}
+                    <div style={{ display: "flex", gap: 12, paddingTop: 8 }}>
+                      <button onClick={exportSrd} disabled={srdExporting} style={primaryBtnStyle}>
+                        {srdExporting ? "Exporting…" : "Export to Word (.docx)"}
+                      </button>
+                      <button onClick={generateSrd} disabled={srdGenerating} style={outlineBtnStyle}>
+                        Re-generate
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </>
             )}
           </div>
         </div>
+
+        {/* Share modal */}
+        {shareModalOpen && shareLink && (
+          <ModalOverlay onClose={() => { setShareModalOpen(false); setShareCopied(false); }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#0f1623", marginBottom: 6 }}>Share with Client</div>
+            <div style={{ fontSize: 13, color: "#627286", marginBottom: 18 }}>
+              Send this link to {companyName || "the client"}. They can fill out the questionnaire directly — no account required. Expires in 30 days.
+            </div>
+            <div style={{ background: "#f8fafc", border: "1px solid #dde5ef", borderRadius: 12, padding: "12px 14px", fontSize: 12.5, color: "#455468", wordBreak: "break-all", marginBottom: 16, fontFamily: "'DM Mono', monospace", lineHeight: 1.5 }}>
+              {shareLink}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => { navigator.clipboard.writeText(shareLink); setShareCopied(true); }}
+                style={{ ...primaryBtnStyle, flex: 1, background: shareCopied ? "#1f9d55" : "#2f6fed" }}>
+                {shareCopied ? "✓ Copied!" : "Copy Link"}
+              </button>
+              <button onClick={() => { setShareModalOpen(false); setShareCopied(false); }} style={outlineBtnStyle}>Close</button>
+            </div>
+          </ModalOverlay>
+        )}
       </div>
     );
   }
@@ -1057,6 +1527,17 @@ function MiniStat({ value, label, accent }: { value: string; label: string; acce
     <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: "18px 20px", boxShadow: "0 1px 3px rgba(16,24,40,0.04)" }}>
       <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: accent, lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: 12, color: "#8a9bb0", marginTop: 5, fontWeight: 500 }}>{label}</div>
+    </div>
+  );
+}
+
+function SrdSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, overflow: "hidden" }}>
+      <div style={{ padding: "12px 20px", background: "#f8fafc", borderBottom: "1px solid #dde5ef", fontSize: 12, fontWeight: 700, color: "#1f3a6e", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+        {title}
+      </div>
+      <div style={{ padding: "18px 20px" }}>{children}</div>
     </div>
   );
 }

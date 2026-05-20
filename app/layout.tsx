@@ -10,6 +10,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
 
+  const isPublicPage = pathname?.startsWith("/q");
+
   return (
     <html lang="en">
       <head>
@@ -21,6 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body style={{ margin: 0, fontFamily: "'DM Sans', sans-serif" }}>
+        {isPublicPage ? children : (
         <div style={{ display: "flex", minHeight: "100vh", background: "#f0f4f9" }}>
 
           {/* Sidebar */}
@@ -177,6 +180,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </div>
           </main>
         </div>
+        )}
       </body>
     </html>
   );

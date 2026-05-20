@@ -1,0 +1,94 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseServer } from "../../../../lib/supabaseServer";
+
+// DB columns: id, client_name, primary_contact, rep_name, created_at, updated_at,
+//             status, answers, activated_levers, estimated_hours, tier, notes, share_token
+//
+// UI Session shape (page.tsx): id, company_name, primary_contact, answers,
+//   activated_levers, estimated_hours, tier, timeline, status, submitted_at, updated_at, notes
+//
+// Mappings:
+//   DB client_name  → UI company_name
+//   DB created_at   → UI submitted_at   (also returned as created_at for convenience)
+//   timeline        — not stored in DB; always returned as null (compute from tier+logic if needed)
+
+type DbSession = {
+  id: string;
+  client_name: string;
+  primary_contact: string | null;
+  created_at: string;
+  updated_at: string | null;
+  status: string;
+  answers: Record<string, string>;
+  activated_levers: number[];
+  estimated_hours: number;
+  tier: string;
+  notes: string | null;
+};
+
+function toUi(row: DbSession) {
+  return {
+    id:               row.id,
+    company_name:     row.client_name,
+    primary_contact:  row.primary_contact ?? null,
+    answers:          row.answers ?? {},
+    activated_levers: row.activated_levers ?? [],
+    estimated_hours:  row.estimated_hours,
+    tier:             row.tier,
+    timeline:         null as string | null,
+    status:           row.status,
+    submitted_at:     row.created_at,
+    updated_at:       row.updated_at ?? null,
+    notes:            row.notes ?? null,
+  };
+}
+
+// GET — list all sessions, newest first
+export async function GET() {
+  const { data, error } = await supabaseServer
+    .from("sessions")
+    .select("id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes")
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    console.error("[estimator/sessions] GET error:", error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json((data ?? []).map(r => toUi(r as DbSession)));
+}
+
+// POST — create new session
+// Body: { company_name, primary_contact?, answers, activated_levers, estimated_hours, tier, status }
+export async function POST(req: NextRequest) {
+  const body = await req.json() as {
+    company_name: string;
+    primary_contact?: string | null;
+    answers: Record<string, string>;
+    activated_levers: number[];
+    estimated_hours: number;
+    tier: string;
+    status: string;
+  };
+
+  const { data, error } = await supabaseServer
+    .from("sessions")
+    .insert({
+      client_name:      body.company_name || "Untitled",
+      primary_contact:  body.primary_contact ?? null,
+      answers:          body.answers ?? {},
+      activated_levers: body.activated_levers ?? [],
+      estimated_hours:  body.estimated_hours ?? 0,
+      tier:             body.tier ?? "Bronze",
+      status:           body.status ?? "draft",
+    })
+    .select("id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes")
+    .single();
+
+  if (error || !data) {
+    console.error("[estimator/sessions] POST error:", error?.message);
+    return NextResponse.json({ error: error?.message ?? "Insert failed" }, { status: 500 });
+  }
+
+  return NextResponse.json(toUi(data as DbSession), { status: 201 });
+}

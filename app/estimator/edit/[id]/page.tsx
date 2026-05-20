@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { supabase } from "../../../../lib/supabase";
 
 type Question = {
   id: number;
@@ -46,36 +45,31 @@ const [isSubmittingSession, setIsSubmittingSession] = useState(false);
     const fetchData = async () => {
       if (!sessionId) return;
 
-      const [{ data: sessionData, error: sessionError }, { data: questionData, error: questionError }] =
-        await Promise.all([
-          supabase
-            .from("estimator_submissions")
-            .select("*")
-            .eq("id", sessionId)
-            .single(),
-          supabase
-            .from("estimator_questions")
-            .select("*")
-            .eq("is_active", true)
-            .order("display_order", { ascending: true }),
+      try {
+        const [sessionRes, questionsRes] = await Promise.all([
+          fetch(`/api/estimator/sessions/${sessionId}`),
+          fetch("/api/estimator/questions"),
         ]);
 
-      if (sessionError) {
-        console.error("Error fetching session:", sessionError);
-      } else if (sessionData) {
-        const session = sessionData as SessionRow;
-        setCompanyName(session.company_name || "");
-        setPrimaryContact(session.primary_contact || "");
-        setAnswers(session.answers || {});
-      }
+        if (sessionRes.ok) {
+          const session = await sessionRes.json() as SessionRow;
+          setCompanyName(session.company_name || "");
+          setPrimaryContact(session.primary_contact || "");
+          setAnswers(session.answers || {});
+        } else {
+          console.error("Error fetching session:", await sessionRes.text());
+        }
 
-      if (questionError) {
-        console.error("Error fetching questions:", questionError);
-      } else {
-        setQuestions((questionData as Question[]) || []);
+        if (questionsRes.ok) {
+          setQuestions(await questionsRes.json() as Question[]);
+        } else {
+          console.error("Error fetching questions:", await questionsRes.text());
+        }
+      } catch (err) {
+        console.error("Error fetching data:", err);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     };
 
     fetchData();
@@ -124,91 +118,79 @@ const [isSubmittingSession, setIsSubmittingSession] = useState(false);
       alert("Please enter a company or prospect name.");
       return;
     }
-
     if (!primaryContact.trim()) {
       alert("Please enter a primary contact.");
       return;
     }
-
     if (!sessionId) return;
 
     try {
       setIsSaving(true);
-
-      const { error } = await supabase
-        .from("estimator_submissions")
-        .update({
+      const res = await fetch(`/api/estimator/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           company_name: companyName,
           primary_contact: primaryContact,
           answers,
           estimated_hours: calculateExpectedHours(),
           tier: getTier(),
-          timeline: getTimeline(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", sessionId);
-
-      if (error) {
-        console.error("Error updating session:", error);
+        }),
+      });
+      if (!res.ok) {
+        console.error("Error updating session:", await res.text());
         alert("There was a problem saving the session.");
         return;
       }
-
       router.push(`/estimator/sessions/${sessionId}`);
     } finally {
       setIsSaving(false);
     }
   };
-const handleSubmitSession = async () => {
-  if (!companyName.trim()) {
-    alert("Please enter a company or prospect name.");
-    return;
-  }
 
-  if (!primaryContact.trim()) {
-    alert("Please enter a primary contact.");
-    return;
-  }
-
-  if (Object.keys(answers).length < questions.length) {
-    alert(
-      `Please answer all questions before submitting. ${
-        questions.length - Object.keys(answers).length
-      } remaining.`
-    );
-    return;
-  }
-
-  if (!sessionId) return;
-
-  try {
-    setIsSubmittingSession(true);
-
-    const { error } = await supabase
-      .from("estimator_submissions")
-      .update({
-        company_name: companyName,
-        primary_contact: primaryContact,
-        answers,
-        estimated_hours: calculateExpectedHours(),
-        tier: getTier(),
-        timeline: getTimeline(),
-        status: "submitted",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", sessionId);
-
-    if (error) {
-      console.error("Error submitting session:", error);
-      alert("There was a problem submitting the session.");
+  const handleSubmitSession = async () => {
+    if (!companyName.trim()) {
+      alert("Please enter a company or prospect name.");
       return;
     }
+    if (!primaryContact.trim()) {
+      alert("Please enter a primary contact.");
+      return;
+    }
+    if (Object.keys(answers).length < questions.length) {
+      alert(
+        `Please answer all questions before submitting. ${
+          questions.length - Object.keys(answers).length
+        } remaining.`
+      );
+      return;
+    }
+    if (!sessionId) return;
 
-    router.push(`/estimator/sessions/${sessionId}`);
-  } finally {
-    setIsSubmittingSession(false);
-  }
-};
+    try {
+      setIsSubmittingSession(true);
+      const res = await fetch(`/api/estimator/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_name: companyName,
+          primary_contact: primaryContact,
+          answers,
+          estimated_hours: calculateExpectedHours(),
+          tier: getTier(),
+          status: "submitted",
+        }),
+      });
+      if (!res.ok) {
+        console.error("Error submitting session:", await res.text());
+        alert("There was a problem submitting the session.");
+        return;
+      }
+      router.push(`/estimator/sessions/${sessionId}`);
+    } finally {
+      setIsSubmittingSession(false);
+    }
+  };
 
   if (loading) {
     return <div style={{ padding: 32 }}>Loading session...</div>;
