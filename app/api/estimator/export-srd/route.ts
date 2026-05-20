@@ -224,7 +224,7 @@ function signatureTable(clientName: string): Table {
     });
 
   return new Table({
-    width: { size: TABLE_WIDTH, type: WidthType.DXA },
+    width: { size: COL_SIG * 2, type: WidthType.DXA },
     rows: [
       new TableRow({ children: [labelCell(`${clientName} — Authorized Signature`), labelCell("TapClicks — Authorized Signature")] }),
       new TableRow({ children: [lineCell(), lineCell()] }),
