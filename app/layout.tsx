@@ -10,7 +10,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
 
-  const isPublicPage = pathname?.startsWith("/q");
+  const isPublicPage = pathname?.startsWith("/q") || pathname?.startsWith("/intake");
 
   return (
     <html lang="en">

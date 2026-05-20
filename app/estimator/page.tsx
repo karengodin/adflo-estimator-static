@@ -484,6 +484,15 @@ export default function EstimatorPage() {
   const [pinOpen, setPinOpen] = useState(false);
   const [pinValue, setPinValue] = useState("");
   const [pinError, setPinError] = useState("");
+  const [intakeCopied, setIntakeCopied] = useState(false);
+
+  function copyIntakeLink() {
+    const url = window.location.origin + "/intake";
+    navigator.clipboard.writeText(url).then(() => {
+      setIntakeCopied(true);
+      setTimeout(() => setIntakeCopied(false), 2000);
+    }).catch(() => prompt("Copy this link:", url));
+  }
 
   // New session modal
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -932,8 +941,29 @@ const saveLogic = async () => {
           adflo<span style={{ color: "#2f6fed" }}>Estimate</span>
         </div>
         <div style={{ fontSize: 15, color: "#627286", marginBottom: 40 }}>Select your role to continue</div>
-        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", justifyContent: "center" }}>
-          <RoleCard icon="📋" title="Client / Sales" desc="Answer the onboarding questionnaire to help us understand your needs." onClick={startClientFlow} />
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+            <RoleCard icon="📋" title="Client / Sales" desc="Answer the onboarding questionnaire to help us understand your needs." onClick={startClientFlow} />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); copyIntakeLink(); }}
+              style={{
+                width: "100%",
+                padding: "9px 16px",
+                borderRadius: 10,
+                border: "1px solid #cddcff",
+                background: intakeCopied ? "#edf8f2" : "#eaf1ff",
+                color: intakeCopied ? "#1f9d55" : "#2f6fed",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                transition: "all 0.15s",
+              }}
+            >
+              {intakeCopied ? "✓ Link copied!" : "🔗 Share Intake Link"}
+            </button>
+          </div>
           <RoleCard icon="🔧" title="Implementation Team" desc="View estimates, sessions, and logic settings." onClick={() => { setPinOpen(true); setPinValue(""); setPinError(""); }} />
         </div>
 

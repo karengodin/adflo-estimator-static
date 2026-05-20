@@ -14,12 +14,41 @@ type SessionRow = {
   submitted_at: string;
   status: string | null;
   updated_at: string | null;
+  intake_notes: Record<string, string> | null;
 };
 
 export default function EstimatorSessionsPage() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [intakeCopied, setIntakeCopied] = useState(false);
+  const [editCopied, setEditCopied] = useState<string | null>(null);
+
+  function copyIntakeLink() {
+    const url = `${window.location.origin}/intake`;
+    navigator.clipboard.writeText(url).then(() => {
+      setIntakeCopied(true);
+      setTimeout(() => setIntakeCopied(false), 2000);
+    }).catch(() => prompt("Copy this link:", url));
+  }
+
+  async function copyEditLink(sessionId: string) {
+    try {
+      const res = await fetch("/api/estimator/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.url) {
+        navigator.clipboard.writeText(data.url).catch(() => prompt("Copy this link:", data.url));
+        setEditCopied(sessionId);
+        setTimeout(() => setEditCopied(null), 2000);
+      }
+    } catch {
+      console.error("Failed to generate edit link");
+    }
+  }
 
   useEffect(() => {
     const fetchSessions = async () => {
@@ -74,9 +103,14 @@ export default function EstimatorSessionsPage() {
             Review and manage implementation estimate sessions.
           </p>
         </div>
-        <Link href="/estimator" style={outlineButtonStyle}>
-          ← Back to Estimator
-        </Link>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={copyIntakeLink} style={{ ...outlineButtonStyle, cursor: "pointer", background: intakeCopied ? "#edf8f2" : "#ffffff", color: intakeCopied ? "#1f9d55" : "#455468", borderColor: intakeCopied ? "#c0e8d0" : "#dde5ef" }}>
+            {intakeCopied ? "✓ Copied!" : "🔗 Share Intake Form"}
+          </button>
+          <Link href="/estimator" style={outlineButtonStyle}>
+            ← Back to Estimator
+          </Link>
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -140,7 +174,7 @@ export default function EstimatorSessionsPage() {
                   <th style={thStyle}>Progress</th>
                   <th style={thStyle}>Rep</th>
                   <th style={thStyle}>Updated</th>
-                  <th style={{ ...thStyle, width: 80 }}></th>
+                  <th style={{ ...thStyle, width: 180 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -155,7 +189,12 @@ export default function EstimatorSessionsPage() {
                       onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                     >
                       <td style={{ ...tdStyleStrong, borderBottom: isLast ? "none" : "1px solid #edf2f7" }}>
-                        {session.company_name || "—"}
+                        <div>{session.company_name || "—"}</div>
+                        {session.intake_notes && (
+                          <span style={{ display: "inline-flex", alignItems: "center", marginTop: 3, fontSize: 10, fontWeight: 700, background: "#eaf1ff", color: "#2f6fed", border: "1px solid #cddcff", borderRadius: 999, padding: "2px 8px" }}>
+                            Via Intake Form
+                          </span>
+                        )}
                       </td>
                       <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7" }}>
                         <span style={getStatusBadgeStyle(session.status || "submitted")}>
@@ -185,9 +224,26 @@ export default function EstimatorSessionsPage() {
                         {formatDate(session.updated_at || session.submitted_at)}
                       </td>
                       <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7" }}>
-                        <Link href={`/estimator/sessions/${session.id}`} style={openButtonStyle}>
-                          Open →
-                        </Link>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          {session.intake_notes && (
+                            <button
+                              type="button"
+                              onClick={() => copyEditLink(session.id)}
+                              style={{
+                                ...openButtonStyle,
+                                cursor: "pointer",
+                                border: editCopied === session.id ? "1px solid #c0e8d0" : "1px solid #dde5ef",
+                                background: editCopied === session.id ? "#edf8f2" : "#f8fafc",
+                                color: editCopied === session.id ? "#1f9d55" : "#455468",
+                              }}
+                            >
+                              {editCopied === session.id ? "✓ Copied!" : "🔗 Edit Link"}
+                            </button>
+                          )}
+                          <Link href={`/estimator/sessions/${session.id}`} style={openButtonStyle}>
+                            Open →
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   );

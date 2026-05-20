@@ -24,6 +24,7 @@ type DbSession = {
   estimated_hours: number;
   tier: string;
   notes: string | null;
+  intake_notes: Record<string, string> | null;
 };
 
 function toUi(row: DbSession) {
@@ -40,6 +41,7 @@ function toUi(row: DbSession) {
     submitted_at:     row.created_at,
     updated_at:       row.updated_at ?? null,
     notes:            row.notes ?? null,
+    intake_notes:     row.intake_notes ?? null,
   };
 }
 
@@ -47,7 +49,7 @@ function toUi(row: DbSession) {
 export async function GET() {
   const { data, error } = await supabaseServer
     .from("sessions")
-    .select("id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes")
+    .select("id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes, intake_notes")
     .order("updated_at", { ascending: false });
 
   if (error) {

@@ -13,6 +13,7 @@ type SessionRow = {
   tier: string;
   timeline: string | null;
   submitted_at: string;
+  intake_notes: Record<string, string> | null;
 };
 
 type Question = {
@@ -35,6 +36,26 @@ export default function SessionDetailPage() {
   const [session, setSession] = useState<SessionRow | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editLinkCopied, setEditLinkCopied] = useState(false);
+
+  async function copyEditLink() {
+    if (!sessionId) return;
+    try {
+      const res = await fetch("/api/estimator/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.url) {
+        navigator.clipboard.writeText(data.url).catch(() => prompt("Copy this link:", data.url));
+        setEditLinkCopied(true);
+        setTimeout(() => setEditLinkCopied(false), 2000);
+      }
+    } catch {
+      console.error("Failed to generate edit link");
+    }
+  }
 
   useEffect(() => {
     const fetchData = async () => {
@@ -179,7 +200,7 @@ const sowItems = useMemo(() => {
           </div>
         </div>
       </div>
-<div style={{ marginTop: 16 }}>
+<div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
   <Link
     href={`/estimator/edit/${session.id}`}
     style={{
@@ -195,6 +216,26 @@ const sowItems = useMemo(() => {
   >
     Continue Editing →
   </Link>
+  {session.intake_notes && (
+    <button
+      type="button"
+      onClick={copyEditLink}
+      style={{
+        display: "inline-block",
+        padding: "10px 16px",
+        borderRadius: 12,
+        border: editLinkCopied ? "1px solid #c0e8d0" : "1px solid #d8e1ec",
+        background: editLinkCopied ? "#edf8f2" : "#ffffff",
+        color: editLinkCopied ? "#1f9d55" : "#455468",
+        fontWeight: 600,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        fontSize: "inherit",
+      }}
+    >
+      {editLinkCopied ? "✓ Link Copied!" : "🔗 Copy Edit Link"}
+    </button>
+  )}
 </div>
 
       {(blockers.length > 0 || sowItems.length > 0) && (

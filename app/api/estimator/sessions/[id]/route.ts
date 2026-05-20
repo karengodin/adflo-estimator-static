@@ -13,6 +13,7 @@ type DbSession = {
   estimated_hours: number;
   tier: string;
   notes: string | null;
+  intake_notes: Record<string, string> | null;
 };
 
 function toUi(row: DbSession) {
@@ -29,10 +30,11 @@ function toUi(row: DbSession) {
     submitted_at:     row.created_at,
     updated_at:       row.updated_at ?? null,
     notes:            row.notes ?? null,
+    intake_notes:     row.intake_notes ?? null,
   };
 }
 
-const SELECT = "id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes";
+const SELECT = "id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes, intake_notes";
 
 // GET — fetch a single session by id
 export async function GET(
