@@ -188,11 +188,12 @@ function hoursTable(rows: BreakdownRow[], total: number): Table {
     ],
   }));
 
-  // TableLayoutType.FIXED is the critical setting: it prevents both Word and
-  // Google Docs from redistributing column widths based on content.
+  // TableLayoutType.FIXED + columnWidths (w:tblGrid) together force Google Docs
+  // to honour the declared widths instead of auto-sizing from content.
   return new Table({
     layout: TableLayoutType.FIXED,
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    columnWidths: [COL_CAT, COL_HRS, COL_DET],
+    width: { size: COL_CAT + COL_HRS + COL_DET, type: WidthType.DXA },
     rows: tableRows,
   });
 }
