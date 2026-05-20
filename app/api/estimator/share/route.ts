@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   }
 
   const origin = req.nextUrl.origin;
-  return NextResponse.json({ token, url: `${origin}/q/${token}` }, { status: 201 });
+  return NextResponse.json({ token, url: `${origin}/q/${token}`, expiresAt }, { status: 201 });
 }
 
 // GET ?token=xxx — validate token and return public session + questions
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
       .single(),
     supabaseServer
       .from("questions")
-      .select("id, cat, q, trigger, sort_order")
+      .select("id, cat, q, trigger, sort_order, question_type, conditional_logic")
       .eq("active", true)
       .order("sort_order"),
   ]);
@@ -74,6 +74,9 @@ export async function GET(req: NextRequest) {
       category: q.cat,
       question: q.q,
       trigger: q.trigger,
+      sort_order: q.sort_order,
+      question_type: q.question_type ?? "yesno",
+      conditional_logic: q.conditional_logic ?? null,
     })),
   });
 }
@@ -111,6 +114,14 @@ export async function PATCH(req: NextRequest) {
   if (error) {
     console.error("[estimator/share] PATCH error:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Stamp used_at when client submits
+  if (body.status === "submitted") {
+    await supabaseServer
+      .from("share_tokens")
+      .update({ used_at: new Date().toISOString() })
+      .eq("token", token);
   }
 
   return NextResponse.json({ ok: true });

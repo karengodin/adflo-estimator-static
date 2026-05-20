@@ -511,6 +511,7 @@ export default function EstimatorPage() {
   // Share link
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareLink, setShareLink] = useState<string | null>(null);
+  const [shareExpiry, setShareExpiry] = useState<string | null>(null);
   const [shareGenerating, setShareGenerating] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
 
@@ -873,6 +874,7 @@ const saveLogic = async () => {
       if (res.ok) {
         const data = await res.json();
         setShareLink(data.url);
+        setShareExpiry(data.expiresAt ?? null);
         setShareCopied(false);
         setShareModalOpen(true);
       }
@@ -1736,12 +1738,20 @@ const saveLogic = async () => {
         {shareModalOpen && shareLink && (
           <ModalOverlay onClose={() => { setShareModalOpen(false); setShareCopied(false); }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#0f1623", marginBottom: 6 }}>Share with Client</div>
-            <div style={{ fontSize: 13, color: "#627286", marginBottom: 18 }}>
-              Send this link to {companyName || "the client"}. They can fill out the questionnaire directly — no account required. Expires in 30 days.
+            <div style={{ fontSize: 13, color: "#627286", marginBottom: 14 }}>
+              Send this link to {companyName || "the client"}. They can fill out the questionnaire directly — no account required.
             </div>
-            <div style={{ background: "#f8fafc", border: "1px solid #dde5ef", borderRadius: 12, padding: "12px 14px", fontSize: 12.5, color: "#455468", wordBreak: "break-all", marginBottom: 16, fontFamily: "'DM Mono', monospace", lineHeight: 1.5 }}>
+            <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 10, padding: "9px 13px", fontSize: 12.5, color: "#92400e", marginBottom: 14, lineHeight: 1.55 }}>
+              ⚠ Client answers will update this session directly.
+            </div>
+            <div style={{ background: "#f8fafc", border: "1px solid #dde5ef", borderRadius: 12, padding: "12px 14px", fontSize: 12.5, color: "#455468", wordBreak: "break-all", marginBottom: 8, fontFamily: "'DM Mono', monospace", lineHeight: 1.5 }}>
               {shareLink}
             </div>
+            {shareExpiry && (
+              <div style={{ fontSize: 12, color: "#8a9bb0", marginBottom: 14 }}>
+                Link expires {new Date(shareExpiry).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10 }}>
               <button
                 onClick={() => { navigator.clipboard.writeText(shareLink); setShareCopied(true); }}
