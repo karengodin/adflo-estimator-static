@@ -7,6 +7,7 @@ import {
   Table,
   TableRow,
   TableCell,
+  TableLayoutType,
   AlignmentType,
   WidthType,
   BorderStyle,
@@ -98,101 +99,100 @@ function centeredPara(text: string, opts: { bold?: boolean; size?: number; color
 
 // ─── Table helpers ───────────────────────────────────────────────────────────
 
-// Page: 8.5" — margins 1.25" left + 1" right = 6.25" usable = 9000 twips.
-// Google Docs ignores WidthType.PERCENTAGE; DXA (twips) is required for both renderers.
-const TABLE_WIDTH  = 9000; // twips, full content width
-const COL_CAT      = 3150; // 35%
-const COL_HRS      =  900; // 10%
-const COL_DET      = 4950; // 55%
-const COL_SIG      = 4500; // 50% each for signature table
+// Column widths in twips (1 inch = 1440 twips).
+// TableLayoutType.FIXED forces both Word and Google Docs to honour these values
+// instead of auto-sizing from content. Total = 7200 twips (5 inches).
+const COL_CAT = 2160; // 1.5 inches — Category
+const COL_HRS =  720; // 0.5 inches — Hours
+const COL_DET = 4320; // 3.0 inches — Details
 
+// Signature table: 2 equal columns at the same 7200-twip total
+const COL_SIG = 3600;
+
+const HEADER_BG  = "1e3a5f"; // dark blue header
+const ALT_ROW_BG = "f5f5f5"; // light grey alternate rows
 const noBorder   = { style: BorderStyle.NONE,   size: 0, color: "FFFFFF" };
-const thinBorder = { style: BorderStyle.SINGLE,  size: 4, color: "DDE5EF" };
-const CELL_MARGIN = { top: 80, bottom: 80, left: 120, right: 120 };
+const CELL_PAD   = { top: 80, bottom: 80, left: 120, right: 120 };
 
 type BreakdownRow = { label: string; hours: number; detail: string[] };
 
 function hoursTable(rows: BreakdownRow[], total: number): Table {
-  const headerCell = (text: string, w: number) =>
+  // Header cell: dark blue background, white bold text
+  const hCell = (text: string, w: number) =>
     new TableCell({
-      children: [new Paragraph({
-        children: [new TextRun({ text, bold: true, size: BODY_SIZE, color: "FFFFFF", font: FONT })],
-      })],
       width: { size: w, type: WidthType.DXA },
-      shading: { type: ShadingType.SOLID, color: BRAND_BLUE },
-      verticalAlign: VerticalAlign.CENTER,
-      margins: CELL_MARGIN,
+      shading: { type: ShadingType.SOLID, color: HEADER_BG },
+      margins: CELL_PAD,
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold: true, color: "FFFFFF", size: BODY_SIZE, font: FONT })],
+      })],
     });
 
-  const dataCell = (text: string, w: number, bold = false) =>
+  // Standard data cell: plain text, optional alternate-row shading
+  const dCell = (text: string, w: number, opts: { bold?: boolean; color?: string; bg?: string } = {}) =>
     new TableCell({
-      children: [new Paragraph({
-        children: [new TextRun({ text, bold, size: BODY_SIZE, font: FONT })],
-      })],
       width: { size: w, type: WidthType.DXA },
-      verticalAlign: VerticalAlign.CENTER,
-      margins: CELL_MARGIN,
-      borders: { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder },
+      margins: CELL_PAD,
+      ...(opts.bg ? { shading: { type: ShadingType.SOLID, color: opts.bg } } : {}),
+      children: [new Paragraph({
+        children: [new TextRun({
+          text,
+          bold: opts.bold ?? false,
+          color: opts.color ?? "000000",
+          size: BODY_SIZE,
+          font: FONT,
+        })],
+      })],
     });
 
-  const detailCell = (lines: string[], w: number) =>
+  // Detail cell: each item on its own Paragraph — no \n characters
+  const detCell = (lines: string[], w: number, bg?: string) =>
     new TableCell({
-      children: lines.length > 0
-        ? lines.map((line) => new Paragraph({
-            children: [new TextRun({ text: line, size: SMALL_SIZE, font: FONT })],
-            spacing: { before: 0, after: 40 },
-          }))
-        : [new Paragraph({ children: [new TextRun({ text: "", size: SMALL_SIZE, font: FONT })] })],
       width: { size: w, type: WidthType.DXA },
-      verticalAlign: VerticalAlign.CENTER,
-      margins: CELL_MARGIN,
-      borders: { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder },
-    });
-
-  const totalCell = (text: string, w: number, bold = false) =>
-    new TableCell({
-      children: [new Paragraph({
-        children: [new TextRun({ text, bold, size: BODY_SIZE, color: BRAND_BLUE, font: FONT })],
-      })],
-      width: { size: w, type: WidthType.DXA },
-      shading: { type: ShadingType.SOLID, color: LIGHT_BLUE },
-      verticalAlign: VerticalAlign.CENTER,
-      margins: CELL_MARGIN,
-      borders: { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder },
+      margins: CELL_PAD,
+      ...(bg ? { shading: { type: ShadingType.SOLID, color: bg } } : {}),
+      children: (lines.length > 0 ? lines : [""]).map((line) =>
+        new Paragraph({
+          children: [new TextRun({ text: line, size: SMALL_SIZE, font: FONT, color: "444444" })],
+          spacing: { before: 0, after: 40 },
+        })
+      ),
     });
 
   const tableRows: TableRow[] = [
+    // Header row
     new TableRow({
       tableHeader: true,
-      children: [
-        headerCell("Category", COL_CAT),
-        headerCell("Hours",    COL_HRS),
-        headerCell("Details",  COL_DET),
-      ],
+      children: [hCell("Category", COL_CAT), hCell("Hours", COL_HRS), hCell("Details", COL_DET)],
     }),
   ];
 
-  for (const row of rows) {
-    const detail = Array.isArray(row.detail) ? row.detail : [];
+  // Data rows — alternate white / f5f5f5
+  rows.forEach((row, i) => {
+    const bg = i % 2 === 1 ? ALT_ROW_BG : undefined;
     tableRows.push(new TableRow({
       children: [
-        dataCell(row.label,        COL_CAT),
-        dataCell(String(row.hours), COL_HRS, false),
-        detailCell(detail,          COL_DET),
+        dCell(row.label,         COL_CAT, { bg }),
+        dCell(String(row.hours), COL_HRS, { bg }),
+        detCell(row.detail,      COL_DET, bg),
       ],
     }));
-  }
+  });
 
+  // Total row
   tableRows.push(new TableRow({
     children: [
-      totalCell("TOTAL",        COL_CAT, true),
-      totalCell(String(total),  COL_HRS, true),
-      totalCell("",             COL_DET),
+      dCell("TOTAL",        COL_CAT, { bold: true, color: BRAND_BLUE, bg: LIGHT_BLUE }),
+      dCell(String(total),  COL_HRS, { bold: true, color: BRAND_BLUE, bg: LIGHT_BLUE }),
+      dCell("",             COL_DET, { bg: LIGHT_BLUE }),
     ],
   }));
 
+  // TableLayoutType.FIXED is the critical setting: it prevents both Word and
+  // Google Docs from redistributing column widths based on content.
   return new Table({
-    width: { size: TABLE_WIDTH, type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
+    width: { size: 100, type: WidthType.PERCENTAGE },
     rows: tableRows,
   });
 }

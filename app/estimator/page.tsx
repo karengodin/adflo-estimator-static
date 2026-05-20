@@ -555,6 +555,14 @@ export default function EstimatorPage() {
     return sessions.filter((s) => (s.company_name || "").toLowerCase().includes(q));
   }, [sessions, sessionSearch]);
 
+  // True when displayed SRD was generated with different names than current inputs
+  const srdIsStale = useMemo(() => {
+    if (!srdData) return false;
+    const srdClient = srdData.meta.clientName || "Client";
+    const srdRep    = srdData.meta.repName    || "TapClicks Team";
+    return (companyName || "Client") !== srdClient || (contactName || "TapClicks Team") !== srdRep;
+  }, [srdData, companyName, contactName]);
+
   // ── Auto-save ──
   const triggerSave = () => {
     if (!currentSession) return;
@@ -783,11 +791,18 @@ const saveLogic = async () => {
   setIsSavingLogic(false);
   alert("Logic saved");
 };
+  // Returns a session object with the latest name fields from current state
+  const sessionWithCurrentNames = () => ({
+    ...currentSession!,
+    company_name:    companyName    || currentSession?.company_name    || null,
+    primary_contact: contactName    || currentSession?.primary_contact || null,
+  });
+
   // ── Generate SRD (template — instant) ──
   const runTemplateSrd = () => {
     if (!currentSession) return;
     setSrdError(null);
-    setSrdData(generateTemplateSRD(currentSession, questions, logic, est));
+    setSrdData(generateTemplateSRD(sessionWithCurrentNames(), questions, logic, est));
   };
 
   // ── Generate SRD (AI) ──
@@ -808,7 +823,7 @@ const saveLogic = async () => {
         const isCreditErr = /credit|quota|billing|payment|balance|overload/i.test(errMsg);
         if (isCreditErr) {
           setSrdError("AI generation requires API credits. Using template generation instead.");
-          setSrdData(generateTemplateSRD(currentSession, questions, logic, est));
+          setSrdData(generateTemplateSRD(sessionWithCurrentNames(), questions, logic, est));
         } else {
           setSrdError(errMsg);
         }
@@ -1573,6 +1588,12 @@ const saveLogic = async () => {
                           </>
                         : "Generate a full SRD instantly from questionnaire answers, or use AI for richer narrative content."}
                     </p>
+                    {srdIsStale && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#8a6417", display: "flex", alignItems: "center", gap: 5 }}>
+                        <span>↻</span>
+                        <span>Client name changed — regenerate to update</span>
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: "flex", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
                     <button onClick={runTemplateSrd} disabled={!currentSession} style={outlineBtnStyle}>
