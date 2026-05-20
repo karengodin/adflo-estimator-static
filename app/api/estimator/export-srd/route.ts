@@ -98,96 +98,112 @@ function centeredPara(text: string, opts: { bold?: boolean; size?: number; color
 
 // ─── Table helpers ───────────────────────────────────────────────────────────
 
-const noBorder = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
-const thinBorder = { style: BorderStyle.SINGLE, size: 4, color: "DDE5EF" };
+// Page: 8.5" — margins 1.25" left + 1" right = 6.25" usable = 9000 twips.
+// Google Docs ignores WidthType.PERCENTAGE; DXA (twips) is required for both renderers.
+const TABLE_WIDTH  = 9000; // twips, full content width
+const COL_CAT      = 3150; // 35%
+const COL_HRS      =  900; // 10%
+const COL_DET      = 4950; // 55%
+const COL_SIG      = 4500; // 50% each for signature table
 
-function hoursTable(breakdown: {
-  form_configuration: { hours: number; detail: string[] };
-  workflow_configuration: { hours: number; detail: string[] };
-  qa: { hours: number; detail: string[] };
-  uat_support: { hours: number; detail: string[] };
-  program_management: { hours: number; detail: string[] };
-  total: number;
-}): Table {
-  const headerCell = (text: string, pct: number) =>
+const noBorder   = { style: BorderStyle.NONE,   size: 0, color: "FFFFFF" };
+const thinBorder = { style: BorderStyle.SINGLE,  size: 4, color: "DDE5EF" };
+const CELL_MARGIN = { top: 80, bottom: 80, left: 120, right: 120 };
+
+type BreakdownRow = { label: string; hours: number; detail: string[] };
+
+function hoursTable(rows: BreakdownRow[], total: number): Table {
+  const headerCell = (text: string, w: number) =>
     new TableCell({
-      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, bold: true, size: BODY_SIZE, color: "FFFFFF", font: FONT })] })],
-      width: { size: pct, type: WidthType.PERCENTAGE },
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold: true, size: BODY_SIZE, color: "FFFFFF", font: FONT })],
+      })],
+      width: { size: w, type: WidthType.DXA },
       shading: { type: ShadingType.SOLID, color: BRAND_BLUE },
       verticalAlign: VerticalAlign.CENTER,
-      margins: { top: 80, bottom: 80, left: 120, right: 120 },
+      margins: CELL_MARGIN,
     });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dataCell = (text: string, pct: number, bold = false, align: string = AlignmentType.LEFT) =>
+  const dataCell = (text: string, w: number, bold = false) =>
     new TableCell({
-      children: [new Paragraph({ alignment: align as any, children: [new TextRun({ text, bold, size: BODY_SIZE, font: FONT })] })],
-      width: { size: pct, type: WidthType.PERCENTAGE },
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold, size: BODY_SIZE, font: FONT })],
+      })],
+      width: { size: w, type: WidthType.DXA },
       verticalAlign: VerticalAlign.CENTER,
-      margins: { top: 60, bottom: 60, left: 120, right: 120 },
+      margins: CELL_MARGIN,
       borders: { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder },
     });
 
-  const totalCell = (text: string, pct: number, bold = false, align: string = AlignmentType.LEFT) =>
+  const detailCell = (lines: string[], w: number) =>
     new TableCell({
-      children: [new Paragraph({ alignment: align as any, children: [new TextRun({ text, bold, size: BODY_SIZE, color: BRAND_BLUE, font: FONT })] })],
-      width: { size: pct, type: WidthType.PERCENTAGE },
+      children: lines.length > 0
+        ? lines.map((line) => new Paragraph({
+            children: [new TextRun({ text: line, size: SMALL_SIZE, font: FONT })],
+            spacing: { before: 0, after: 40 },
+          }))
+        : [new Paragraph({ children: [new TextRun({ text: "", size: SMALL_SIZE, font: FONT })] })],
+      width: { size: w, type: WidthType.DXA },
+      verticalAlign: VerticalAlign.CENTER,
+      margins: CELL_MARGIN,
+      borders: { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder },
+    });
+
+  const totalCell = (text: string, w: number, bold = false) =>
+    new TableCell({
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold, size: BODY_SIZE, color: BRAND_BLUE, font: FONT })],
+      })],
+      width: { size: w, type: WidthType.DXA },
       shading: { type: ShadingType.SOLID, color: LIGHT_BLUE },
       verticalAlign: VerticalAlign.CENTER,
-      margins: { top: 60, bottom: 60, left: 120, right: 120 },
+      margins: CELL_MARGIN,
       borders: { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder },
     });
 
-  const rows: TableRow[] = [
+  const tableRows: TableRow[] = [
     new TableRow({
       tableHeader: true,
-      children: [headerCell("Category", 45), headerCell("Hours", 15), headerCell("Details", 40)],
+      children: [
+        headerCell("Category", COL_CAT),
+        headerCell("Hours",    COL_HRS),
+        headerCell("Details",  COL_DET),
+      ],
     }),
   ];
 
-  const items: Array<{ label: string; key: keyof typeof breakdown }> = [
-    { label: "Form Configuration", key: "form_configuration" },
-    { label: "Workflow Configuration", key: "workflow_configuration" },
-    { label: "QA", key: "qa" },
-    { label: "UAT Support", key: "uat_support" },
-    { label: "Program Management", key: "program_management" },
-  ];
-
-  for (const { label, key } of items) {
-    const item = breakdown[key] as { hours: number; detail: string[] };
-    const detail = Array.isArray(item.detail) ? item.detail.join("\n") : "";
-    rows.push(
-      new TableRow({
-        children: [
-          dataCell(label, 45),
-          dataCell(String(item.hours), 15, false, AlignmentType.CENTER),
-          dataCell(detail, 40),
-        ],
-      })
-    );
+  for (const row of rows) {
+    const detail = Array.isArray(row.detail) ? row.detail : [];
+    tableRows.push(new TableRow({
+      children: [
+        dataCell(row.label,        COL_CAT),
+        dataCell(String(row.hours), COL_HRS, false),
+        detailCell(detail,          COL_DET),
+      ],
+    }));
   }
 
-  rows.push(
-    new TableRow({
-      children: [
-        totalCell("TOTAL", 45, true),
-        totalCell(String(breakdown.total), 15, true, AlignmentType.CENTER),
-        totalCell("", 40),
-      ],
-    })
-  );
+  tableRows.push(new TableRow({
+    children: [
+      totalCell("TOTAL",        COL_CAT, true),
+      totalCell(String(total),  COL_HRS, true),
+      totalCell("",             COL_DET),
+    ],
+  }));
 
   return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows,
+    width: { size: TABLE_WIDTH, type: WidthType.DXA },
+    rows: tableRows,
   });
 }
 
 function signatureTable(clientName: string): Table {
   const labelCell = (text: string) =>
     new TableCell({
-      children: [new Paragraph({ children: [new TextRun({ text, bold: true, size: SMALL_SIZE, color: GRAY_TEXT, font: FONT })] })],
-      width: { size: 50, type: WidthType.PERCENTAGE },
+      children: [new Paragraph({
+        children: [new TextRun({ text, bold: true, size: SMALL_SIZE, color: GRAY_TEXT, font: FONT })],
+      })],
+      width: { size: COL_SIG, type: WidthType.DXA },
       borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
       margins: { top: 60, bottom: 4, left: 0, right: 120 },
     });
@@ -195,16 +211,20 @@ function signatureTable(clientName: string): Table {
   const lineCell = () =>
     new TableCell({
       children: [
-        new Paragraph({ children: [new TextRun({ text: "", size: BODY_SIZE })] }),
-        new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000" } }, children: [new TextRun({ text: " " })] }),
+        new Paragraph({ children: [new TextRun({ text: " ", size: BODY_SIZE, font: FONT })] }),
+        new Paragraph({
+          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "000000" } },
+          children: [new TextRun({ text: " ", size: BODY_SIZE, font: FONT })],
+          spacing: { before: 240, after: 60 },
+        }),
       ],
-      width: { size: 50, type: WidthType.PERCENTAGE },
+      width: { size: COL_SIG, type: WidthType.DXA },
       borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
       margins: { top: 60, bottom: 4, left: 120, right: 0 },
     });
 
   return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: TABLE_WIDTH, type: WidthType.DXA },
     rows: [
       new TableRow({ children: [labelCell(`${clientName} — Authorized Signature`), labelCell("TapClicks — Authorized Signature")] }),
       new TableRow({ children: [lineCell(), lineCell()] }),
@@ -316,8 +336,8 @@ export async function POST(req: NextRequest) {
           bodyPara(srd.in_scope?.narrative || ""),
           spacer(1),
           subHeading("Hours Breakdown"),
-          ...(srd.in_scope?.hours_breakdown
-            ? [hoursTable(srd.in_scope.hours_breakdown)]
+          ...(srd.in_scope?.hours_breakdown?.rows
+            ? [hoursTable(srd.in_scope.hours_breakdown.rows, srd.in_scope.hours_breakdown.total ?? 0)]
             : [bodyPara("See engagement overview for details.")]),
 
           // ── Section 8: Out of Scope ───────────────────────────────────────

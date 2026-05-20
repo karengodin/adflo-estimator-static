@@ -95,11 +95,15 @@ Return ONLY a valid JSON object — no markdown, no backticks, no explanation be
   "in_scope": {
     "narrative": "2-3 sentences summarising what TapClicks will deliver in this engagement.",
     "hours_breakdown": {
-      "form_configuration": { "hours": <integer>, "detail": ["Client forms - X hrs", "Order forms - X hrs", "Product/Flight forms - X hrs"] },
-      "workflow_configuration": { "hours": <integer>, "detail": ["<specific workflow items based on answers>"] },
-      "qa": { "hours": <integer>, "detail": ["TapClicks internal QA of configured forms and workflows"] },
-      "uat_support": { "hours": <integer>, "detail": ["UAT preparation, scripts, and support"] },
-      "program_management": { "hours": <integer>, "detail": ["Project management, communication, and coordination"] },
+      "rows": [
+        { "label": "Form Configuration", "hours": <integer>, "detail": ["Product forms - X hrs", "Order forms - X hrs"] },
+        { "label": "Workflow Configuration", "hours": <integer>, "detail": ["<specific workflow items based on answers>"] },
+        { "label": "Integration Configuration", "hours": <integer>, "detail": ["<only include if integrations answered Yes>"] },
+        { "label": "Financial Configuration", "hours": <integer>, "detail": ["<only include if financial questions answered Yes>"] },
+        { "label": "QA & Testing", "hours": <integer>, "detail": ["TapClicks internal QA of configured forms and workflows"] },
+        { "label": "UAT Support", "hours": <integer>, "detail": ["UAT preparation, scripts, and support"] },
+        { "label": "Program Management", "hours": <integer>, "detail": ["Project management, communication, and coordination"] }
+      ],
       "total": ${totalHours}
     }
   },
@@ -109,7 +113,7 @@ Return ONLY a valid JSON object — no markdown, no backticks, no explanation be
 }
 
 Rules:
-- hours_breakdown totals must sum exactly to ${totalHours}. Distribute as: form_configuration ~45%, workflow_configuration ~20%, qa ~10%, uat_support ~15%, program_management ~10%. Adjust based on which categories had the most triggered questions.
+- hours_breakdown rows must sum exactly to ${totalHours}. Omit Integration Configuration or Financial Configuration rows if no questions in those categories were answered Yes. Include rows proportional to triggered weights: forms ~40-50%, workflow ~15-25%, integrations if applicable, QA ~10%, UAT ~10%, Program Management ~10%.
 - out_of_scope: always include the 5 standard items shown. Add additional items for any integrations or features that were answered "No" or "Not answered".
 - integration_strategy: set to null if no integration questions were answered "Yes". Otherwise describe the integration approach.
 - risks_and_flags: include any blockers, complexity items, or "Not answered" questions that could affect timeline. Empty array if none.
@@ -162,6 +166,7 @@ Rules:
       estimatedHours: session.estimated_hours,
       tier: session.tier,
       generatedAt: new Date().toISOString(),
+      generated_by: "ai",
     },
   });
 }

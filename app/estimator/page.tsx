@@ -56,6 +56,8 @@ type Logic = {
 
 type Screen = "loading" | "role" | "questionnaire" | "complete" | "team-dashboard" | "team-session";
 
+type SrdBreakdownRow = { label: string; hours: number; detail: string[] };
+
 type SrdData = {
   engagement_overview: string;
   customer_objectives: string[];
@@ -63,11 +65,7 @@ type SrdData = {
   in_scope: {
     narrative: string;
     hours_breakdown: {
-      form_configuration: { hours: number; detail: string[] };
-      workflow_configuration: { hours: number; detail: string[] };
-      qa: { hours: number; detail: string[] };
-      uat_support: { hours: number; detail: string[] };
-      program_management: { hours: number; detail: string[] };
+      rows: SrdBreakdownRow[];
       total: number;
     };
   };
@@ -80,6 +78,7 @@ type SrdData = {
     estimatedHours: number;
     tier: string;
     generatedAt: string;
+    generated_by?: "template" | "ai";
   };
 };
 
@@ -246,6 +245,217 @@ function getTierStyle(tierName: string): React.CSSProperties {
   return { ...base, background: "#eaf1ff", color: "#2f6fed", border: "1px solid #cddcff" };
 }
 
+// ─── Template SRD Generator ────────────────────────────────────────────────
+
+function generateTemplateSRD(
+  session: Session,
+  questions: Question[],
+  logic: Logic,
+  est: EstResult,
+): SrdData {
+  const clientName = session.company_name || "Client";
+  const repName    = session.primary_contact || "TapClicks Team";
+  const answers    = session.answers || {};
+
+  const bySort = (n: number) => questions.find((q) => q.display_order === n);
+  const yes    = (n: number) => { const q = bySort(n); return q ? answers[String(q.id)] === "Yes" : false; };
+  const num    = (n: number) => { const q = bySort(n); return q ? parseInt(answers[String(q.id)] || "0", 10) || 0 : 0; };
+
+  // ── Customer Objectives ──
+  const objectives: string[] = [];
+  const OBJ: Array<{ s: number; t: "yesno" | "number"; txt: (n: number) => string }> = [
+    { s: 1,  t: "yesno",  txt: () => "Establish AdFlo as the single source of truth for all campaign and order data" },
+    { s: 2,  t: "yesno",  txt: () => "Migrate historical campaign and order data into AdFlo" },
+    { s: 3,  t: "yesno",  txt: () => "Configure multi-step approval workflows for order activation" },
+    { s: 4,  t: "yesno",  txt: () => "Enable cross-departmental approval routing (Sales, Finance, Operations)" },
+    { s: 5,  t: "yesno",  txt: () => "Implement conditional workflow routing with if/then business rules" },
+    { s: 6,  t: "yesno",  txt: () => "Automate SLA tracking and deadline management within workflows" },
+    { s: 7,  t: "yesno",  txt: () => "Integrate AdFlo with the existing CRM system for unified data management" },
+    { s: 8,  t: "yesno",  txt: () => "Connect AdFlo with proposal and quoting tools for streamlined order creation" },
+    { s: 9,  t: "yesno",  txt: () => "Integrate with billing and finance systems for automated revenue tracking" },
+    { s: 10, t: "yesno",  txt: () => "Connect external platform data to AdFlo via API or webhook" },
+    { s: 11, t: "yesno",  txt: () => "Enable bi-directional data sync across integrated systems" },
+    { s: 12, t: "number", txt: (n) => `Configure ${n} push connector${n !== 1 ? "s" : ""} to ad servers and external vendors` },
+    { s: 13, t: "number", txt: (n) => `Configure ${n} product form${n !== 1 ? "s" : ""} within AdFlo` },
+    { s: 14, t: "yesno",  txt: () => "Enable flight forms and workflow automation for product management" },
+    { s: 15, t: "yesno",  txt: () => "Build custom task forms to support operational workflows" },
+    { s: 16, t: "yesno",  txt: () => "Configure buy sheet and IO export templates" },
+    { s: 17, t: "yesno",  txt: () => "Support multiple business units or brands within a single AdFlo instance" },
+    { s: 18, t: "yesno",  txt: () => "Implement role-based access controls and permission tiers" },
+    { s: 19, t: "yesno",  txt: () => "Enable custom financial tracking including margin, COGS, and reconciliation" },
+    { s: 20, t: "yesno",  txt: () => "Automate billing and invoice generation within the platform" },
+    { s: 21, t: "yesno",  txt: () => "Support revenue adjustments via change order workflows" },
+    { s: 22, t: "yesno",  txt: () => "Provide campaign pacing data and in-flight performance visibility" },
+    { s: 28, t: "yesno",  txt: () => "Scale the platform to support 20+ concurrent users" },
+    { s: 29, t: "yesno",  txt: () => "Support multi-market or multi-region operations within AdFlo" },
+  ];
+  for (const { s, t, txt } of OBJ) {
+    if (t === "yesno" && yes(s)) objectives.push(txt(0));
+    if (t === "number") { const n = num(s); if (n > 0) objectives.push(txt(n)); }
+  }
+
+  // ── System Architecture ──
+  const productCount   = num(13);
+  const hasFlight      = yes(14);
+  const connectorCount = num(12);
+  const hasIntegrations = [7,8,9,10,11].some((s) => yes(s)) || connectorCount > 0;
+
+  let arch = "The order structure will follow: One Order per Campaign. ";
+  if (productCount > 0) {
+    arch += `${productCount} product form${productCount !== 1 ? "s" : ""} configured`;
+    arch += hasFlight ? ", with flight forms and workflows. " : ", without flight-level forms. ";
+  } else {
+    arch += "Product configuration to be defined during discovery. ";
+  }
+  if (hasIntegrations) {
+    const parts: string[] = [];
+    if (yes(7))           parts.push("CRM system");
+    if (yes(8))           parts.push("proposal/quoting tools");
+    if (yes(9))           parts.push("billing/finance systems");
+    if (yes(10))          parts.push("external API/webhook connections");
+    if (yes(11))          parts.push("bi-directional sync");
+    if (connectorCount > 0) parts.push(`${connectorCount} push connector${connectorCount !== 1 ? "s" : ""}`);
+    if (parts.length)     arch += `Integration connections include: ${parts.join(", ")}.`;
+  }
+
+  // ── Hours Breakdown ──
+  // Form Configuration
+  const q15 = bySort(15); const taskHrs = (q15 && answers[String(q15.id)] === "Yes") ? 5 : 0;
+  const q16 = bySort(16); const buyHrs  = (q16 && answers[String(q16.id)] === "Yes") ? 5 : 0;
+  const formTotal = est.products + taskHrs + buyHrs;
+  const formDetail: string[] = [];
+  if (productCount > 0) {
+    let desc = `${productCount} product form${productCount !== 1 ? "s" : ""}`;
+    if (hasFlight) desc += ", with flight forms and workflows";
+    formDetail.push(desc);
+  }
+  if (taskHrs) formDetail.push("Custom task forms");
+  if (buyHrs)  formDetail.push("Buy sheets and IO exports");
+
+  // Workflow Configuration (includes data & structure + scale)
+  const WORKFLOW_LABELS: Record<number, string> = {
+    1: "Single source of truth configuration",
+    2: "Historical data import",
+    3: "Multi-step approval workflows",
+    4: "Cross-departmental approval routing",
+    5: "Conditional workflow routing",
+    6: "Automated SLA tracking",
+    28: "User scale configuration (20+ users)",
+    29: "Multi-market / multi-region configuration",
+  };
+  const workflowDetail: string[] = [];
+  let workflowTotal = 0;
+  for (const s of [1,2,3,4,5,6,28,29]) {
+    if (yes(s)) { const q = bySort(s); if (q) { workflowTotal += q.weight; workflowDetail.push(WORKFLOW_LABELS[s]); } }
+  }
+
+  // Integration Configuration
+  const INTEG_LABELS: Record<number, string> = {
+    7:  "CRM system integration",
+    8:  "Proposal and quoting tool integration",
+    9:  "Billing/finance system integration",
+    10: "External API/webhook connections",
+    11: "Bi-directional sync configuration",
+  };
+  const integDetail: string[] = [];
+  let integBase = 0;
+  for (const s of [7,8,9,10,11]) {
+    if (yes(s)) { const q = bySort(s); if (q) { integBase += q.weight; integDetail.push(INTEG_LABELS[s]); } }
+  }
+  if (connectorCount > 0) integDetail.push(`${connectorCount} push connector${connectorCount !== 1 ? "s" : ""} to ad servers/vendors`);
+  const integTotal = integBase + est.connectors;
+
+  // Financial Configuration
+  const FIN_LABELS: Record<number, string> = {
+    19: "Custom financial tracking (margin, COGS, reconciliation)",
+    20: "Billing automation and invoice generation",
+    21: "Change order workflows",
+    22: "Campaign pacing data",
+  };
+  const finDetail: string[] = [];
+  let finTotal = 0;
+  for (const s of [19,20,21,22]) {
+    if (yes(s)) { const q = bySort(s); if (q) { finTotal += q.weight; finDetail.push(FIN_LABELS[s]); } }
+  }
+
+  // User & Permissions
+  const USER_LABELS: Record<number, string> = {
+    17: "Multiple business units / brand support",
+    18: "Role-based access controls and permission tiers",
+  };
+  const userDetail: string[] = [];
+  let userTotal = 0;
+  for (const s of [17,18]) {
+    if (yes(s)) { const q = bySort(s); if (q) { userTotal += q.weight; userDetail.push(USER_LABELS[s]); } }
+  }
+
+  const contentSub = formTotal + workflowTotal + integTotal + finTotal + userTotal;
+  const qaHrs   = Math.round(contentSub * 0.10);
+  const pmHrs   = Math.round(contentSub * 0.10);
+  const riskBuf = Math.max(0, est.expected - est.subtotal);
+
+  const riskDetail = est.redFlags.length > 0
+    ? est.redFlags.map((f) => f.split("—")[0].trim())
+    : ["Additional hours based on implementation complexity"];
+
+  const rows: SrdBreakdownRow[] = [];
+  if (formTotal     > 0) rows.push({ label: "Form Configuration",       hours: formTotal,     detail: formDetail });
+  if (workflowTotal > 0) rows.push({ label: "Workflow Configuration",    hours: workflowTotal, detail: workflowDetail });
+  if (integTotal    > 0) rows.push({ label: "Integration Configuration", hours: integTotal,    detail: integDetail });
+  if (finTotal      > 0) rows.push({ label: "Financial Configuration",   hours: finTotal,      detail: finDetail });
+  if (userTotal     > 0) rows.push({ label: "User & Permission Setup",   hours: userTotal,     detail: userDetail });
+  rows.push({ label: "QA & Testing",       hours: qaHrs, detail: ["Quality assurance across all configured items"] });
+  rows.push({ label: "Program Management", hours: pmHrs, detail: ["Project oversight and implementation coordination"] });
+  if (riskBuf > 0) rows.push({ label: "Risk Buffer", hours: riskBuf, detail: riskDetail });
+
+  // ── Out of Scope ──
+  const outOfScope = [
+    "Active campaign or historical data migration (unless explicitly scoped above)",
+    "Custom margin configuration",
+    "Rate card configuration",
+    "Orders reporting",
+    "Training beyond UAT support",
+  ];
+  if (!yes(7))  outOfScope.push("CRM integration");
+  if (!yes(8))  outOfScope.push("Proposal or quoting tool integration");
+  if (!yes(9))  outOfScope.push("Billing or finance system integration");
+  if (!yes(10)) outOfScope.push("External API or webhook connections");
+  if (!yes(16)) outOfScope.push("Buy sheet or IO export configuration");
+
+  // ── Integration Strategy ──
+  let integrationStrategy: string | null = null;
+  if (hasIntegrations) {
+    const lines: string[] = [];
+    if (yes(7))  lines.push("CRM Integration: Approach and field mapping to be defined during discovery phase.");
+    if (yes(8))  lines.push("Proposal/Quoting Tool Integration: Approach to be defined during discovery phase.");
+    if (yes(9))  lines.push("Billing/Finance Integration: Approach to be defined during discovery phase.");
+    if (yes(10)) lines.push("External API/Webhook: Approach and data schema to be defined during discovery phase.");
+    if (connectorCount > 0) lines.push(`Push Connectors (${connectorCount}): Configuration and testing included in scope.`);
+    integrationStrategy = lines.join(" ");
+  }
+
+  return {
+    engagement_overview: `${clientName} is implementing TapClicks AdFlo Order Management & Workflow. This engagement covers initial configuration, UAT support, and go-live preparation based on discovery completed with ${repName}.`,
+    customer_objectives: objectives.length > 0 ? objectives : ["Configuration and workflow setup per discovery sessions"],
+    system_architecture: arch,
+    in_scope: {
+      narrative: `The following configuration work is included in this engagement for ${clientName}. All items are based on discovery responses and are subject to change via the change request process.`,
+      hours_breakdown: { rows, total: est.expected },
+    },
+    out_of_scope: outOfScope,
+    integration_strategy: integrationStrategy,
+    risks_and_flags: [...est.redFlags],
+    meta: {
+      clientName,
+      repName,
+      estimatedHours: est.expected,
+      tier: getTier(est.expected, logic).name,
+      generatedAt: new Date().toISOString(),
+      generated_by: "template",
+    },
+  };
+}
+
 function getStatusStyle(status: string): React.CSSProperties {
   const base: React.CSSProperties = { display: "inline-flex", alignItems: "center", padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700, textTransform: "capitalize" };
   if (status === "draft") return { ...base, background: "#fff8e8", color: "#8a6417", border: "1px solid #f3e0a3" };
@@ -294,7 +504,7 @@ export default function EstimatorPage() {
   
   // SRD
   const [srdData, setSrdData] = useState<SrdData | null>(null);
-  const [srdGenerating, setSrdGenerating] = useState(false);
+  const [srdAiGenerating, setSrdAiGenerating] = useState(false);
   const [srdExporting, setSrdExporting] = useState(false);
   const [srdError, setSrdError] = useState<string | null>(null);
 
@@ -573,10 +783,17 @@ const saveLogic = async () => {
   setIsSavingLogic(false);
   alert("Logic saved");
 };
-  // ── Generate SRD ──
-  const generateSrd = async () => {
+  // ── Generate SRD (template — instant) ──
+  const runTemplateSrd = () => {
     if (!currentSession) return;
-    setSrdGenerating(true);
+    setSrdError(null);
+    setSrdData(generateTemplateSRD(currentSession, questions, logic, est));
+  };
+
+  // ── Generate SRD (AI) ──
+  const generateAiSrd = async () => {
+    if (!currentSession) return;
+    setSrdAiGenerating(true);
     setSrdError(null);
     await persistSession();
     try {
@@ -586,12 +803,22 @@ const saveLogic = async () => {
         body: JSON.stringify({ sessionId: currentSession.id }),
       });
       const data = await res.json();
-      if (!res.ok) { setSrdError(data.error || "Generation failed"); return; }
+      if (!res.ok) {
+        const errMsg: string = data.error || "Generation failed";
+        const isCreditErr = /credit|quota|billing|payment|balance|overload/i.test(errMsg);
+        if (isCreditErr) {
+          setSrdError("AI generation requires API credits. Using template generation instead.");
+          setSrdData(generateTemplateSRD(currentSession, questions, logic, est));
+        } else {
+          setSrdError(errMsg);
+        }
+        return;
+      }
       setSrdData(data as SrdData);
     } catch (e: unknown) {
       setSrdError(e instanceof Error ? e.message : "Generation failed");
     } finally {
-      setSrdGenerating(false);
+      setSrdAiGenerating(false);
     }
   };
 
@@ -1337,14 +1564,23 @@ const saveLogic = async () => {
                     <h2 style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", color: "#0f1623", marginBottom: 6 }}>SRD Generator</h2>
                     <p style={{ fontSize: 14, color: "#627286" }}>
                       {srdData
-                        ? `Generated ${new Date(srdData.meta.generatedAt).toLocaleString()} · ${srdData.meta.estimatedHours} hrs · ${srdData.meta.tier}`
-                        : "Generates a full Solutions Requirements Definition from the questionnaire answers."}
+                        ? <>
+                            {srdData.meta.generated_by === "ai"
+                              ? <span style={{ background: "#eaf1ff", color: "#2f6fed", borderRadius: 6, padding: "2px 7px", fontSize: 11, fontWeight: 700, marginRight: 6 }}>AI</span>
+                              : <span style={{ background: "#f0f4f9", color: "#627286", borderRadius: 6, padding: "2px 7px", fontSize: 11, fontWeight: 700, marginRight: 6 }}>Template</span>
+                            }
+                            {new Date(srdData.meta.generatedAt).toLocaleString()} · {srdData.meta.estimatedHours} hrs · {srdData.meta.tier}
+                          </>
+                        : "Generate a full SRD instantly from questionnaire answers, or use AI for richer narrative content."}
                     </p>
                   </div>
-                  <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
-                    <button onClick={generateSrd} disabled={srdGenerating || !currentSession}
-                      style={{ ...primaryBtnStyle, background: srdGenerating ? "#8a9bb0" : "#2f6fed" }}>
-                      {srdGenerating ? "Generating…" : srdData ? "Re-generate" : "Generate SRD"}
+                  <div style={{ display: "flex", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
+                    <button onClick={runTemplateSrd} disabled={!currentSession} style={outlineBtnStyle}>
+                      {srdData ? "Re-generate" : "Generate SRD"}
+                    </button>
+                    <button onClick={generateAiSrd} disabled={srdAiGenerating || !currentSession}
+                      style={{ ...primaryBtnStyle, background: srdAiGenerating ? "#8a9bb0" : "#2f6fed" }}>
+                      {srdAiGenerating ? "Generating with AI…" : "✨ Generate with AI"}
                     </button>
                     {srdData && (
                       <button onClick={exportSrd} disabled={srdExporting} style={outlineBtnStyle}>
@@ -1354,27 +1590,30 @@ const saveLogic = async () => {
                   </div>
                 </div>
 
-                {/* Error */}
+                {/* Error / fallback message */}
                 {srdError && (
-                  <div style={{ marginBottom: 20, padding: "14px 18px", background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 12, color: "#991b1b", fontSize: 13 }}>
+                  <div style={{ marginBottom: 20, padding: "14px 18px", background: srdData ? "#fff8e8" : "#fee2e2", border: `1px solid ${srdData ? "#f3e0a3" : "#fca5a5"}`, borderRadius: 12, color: srdData ? "#8a6417" : "#991b1b", fontSize: 13 }}>
                     {srdError}
                   </div>
                 )}
 
                 {/* Empty state */}
-                {!srdData && !srdGenerating && (
+                {!srdData && !srdAiGenerating && (
                   <div style={{ padding: "64px 0", textAlign: "center", color: "#8a9bb0" }}>
                     <div style={{ fontSize: 36, marginBottom: 16 }}>📄</div>
                     <div style={{ fontWeight: 700, color: "#455468", marginBottom: 8, fontSize: 16 }}>No SRD generated yet</div>
                     <div style={{ fontSize: 14, marginBottom: 24 }}>
-                      Answer questionnaire questions, then click Generate SRD to create a client-ready document.
+                      Answer the questionnaire, then generate your SRD — template is instant, AI adds richer narrative.
                     </div>
-                    <button onClick={generateSrd} disabled={!currentSession} style={primaryBtnStyle}>Generate SRD</button>
+                    <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                      <button onClick={runTemplateSrd} disabled={!currentSession} style={outlineBtnStyle}>Generate SRD</button>
+                      <button onClick={generateAiSrd} disabled={srdAiGenerating || !currentSession} style={primaryBtnStyle}>✨ Generate with AI</button>
+                    </div>
                   </div>
                 )}
 
-                {/* Loading skeleton */}
-                {srdGenerating && (
+                {/* AI loading skeleton */}
+                {srdAiGenerating && (
                   <div style={{ padding: "48px 0", textAlign: "center" }}>
                     <div style={spinnerStyle} />
                     <div style={{ marginTop: 16, fontSize: 14, color: "#627286" }}>Calling Claude to generate SRD…</div>
@@ -1382,10 +1621,10 @@ const saveLogic = async () => {
                 )}
 
                 {/* SRD content */}
-                {srdData && !srdGenerating && (
+                {srdData && !srdAiGenerating && (
                   <div style={{ display: "grid", gap: 18 }}>
 
-                    {/* Risks banner — show prominently if present */}
+                    {/* Risks banner */}
                     {srdData.risks_and_flags.length > 0 && (
                       <div style={{ background: "#fff8e8", border: "1px solid #f3e0a3", borderRadius: 16, padding: "16px 20px" }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: "#8a6417", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>⚠️ Risks & Scope Flags</div>
@@ -1397,12 +1636,10 @@ const saveLogic = async () => {
                       </div>
                     )}
 
-                    {/* Engagement Overview */}
                     <SrdSection title="Engagement Overview">
                       <p style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, margin: 0 }}>{srdData.engagement_overview}</p>
                     </SrdSection>
 
-                    {/* Customer Objectives */}
                     <SrdSection title="Customer Objectives">
                       <ul style={{ margin: 0, paddingLeft: 20 }}>
                         {srdData.customer_objectives.map((obj, i) => (
@@ -1411,12 +1648,10 @@ const saveLogic = async () => {
                       </ul>
                     </SrdSection>
 
-                    {/* System Architecture */}
                     <SrdSection title="System Architecture">
                       <p style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, margin: 0 }}>{srdData.system_architecture}</p>
                     </SrdSection>
 
-                    {/* In Scope */}
                     <SrdSection title="In Scope">
                       <p style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, marginBottom: 18 }}>{srdData.in_scope.narrative}</p>
                       <div style={{ fontSize: 11, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Hours Breakdown</div>
@@ -1429,17 +1664,13 @@ const saveLogic = async () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {(["form_configuration", "workflow_configuration", "qa", "uat_support", "program_management"] as const).map((key, i) => {
-                            const labels: Record<string, string> = { form_configuration: "Form Configuration", workflow_configuration: "Workflow Configuration", qa: "QA", uat_support: "UAT Support", program_management: "Program Management" };
-                            const item = srdData.in_scope.hours_breakdown[key];
-                            return (
-                              <tr key={key} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
-                                <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontWeight: 500, color: "#0f1623" }}>{labels[key]}</td>
-                                <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "#2f6fed" }}>{item.hours} hrs</td>
-                                <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", color: "#627286", fontSize: 12 }}>{item.detail.join(" · ")}</td>
-                              </tr>
-                            );
-                          })}
+                          {srdData.in_scope.hours_breakdown.rows.map((row, i) => (
+                            <tr key={row.label} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                              <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontWeight: 500, color: "#0f1623" }}>{row.label}</td>
+                              <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "#2f6fed", whiteSpace: "nowrap" }}>{row.hours} hrs</td>
+                              <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", color: "#627286", fontSize: 12 }}>{row.detail.join(" · ")}</td>
+                            </tr>
+                          ))}
                           <tr style={{ background: "#eaf1ff" }}>
                             <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1f3a6e" }}>TOTAL</td>
                             <td style={{ padding: "10px 14px", fontWeight: 800, color: "#1f3a6e", fontVariantNumeric: "tabular-nums" }}>{srdData.in_scope.hours_breakdown.total} hrs</td>
@@ -1449,7 +1680,6 @@ const saveLogic = async () => {
                       </table>
                     </SrdSection>
 
-                    {/* Out of Scope */}
                     <SrdSection title="Out of Scope">
                       <ul style={{ margin: 0, paddingLeft: 20 }}>
                         {srdData.out_of_scope.map((item, i) => (
@@ -1458,7 +1688,6 @@ const saveLogic = async () => {
                       </ul>
                     </SrdSection>
 
-                    {/* Integration Strategy — only if present */}
                     {srdData.integration_strategy && (
                       <SrdSection title="Integration Strategy">
                         <p style={{ fontSize: 14, color: "#455468", lineHeight: 1.7, margin: 0 }}>{srdData.integration_strategy}</p>
@@ -1470,8 +1699,9 @@ const saveLogic = async () => {
                       <button onClick={exportSrd} disabled={srdExporting} style={primaryBtnStyle}>
                         {srdExporting ? "Exporting…" : "Export to Word (.docx)"}
                       </button>
-                      <button onClick={generateSrd} disabled={srdGenerating} style={outlineBtnStyle}>
-                        Re-generate
+                      <button onClick={runTemplateSrd} style={outlineBtnStyle}>Re-generate</button>
+                      <button onClick={generateAiSrd} disabled={srdAiGenerating} style={outlineBtnStyle}>
+                        ✨ Re-generate with AI
                       </button>
                     </div>
                   </div>
