@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import ProjectTab from "./ProjectTab";
 
 type SessionRow = {
   id: string;
@@ -37,6 +38,7 @@ export default function SessionDetailPage() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
   const [editLinkCopied, setEditLinkCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<"session" | "project">("session");
 
   async function copyEditLink() {
     if (!sessionId) return;
@@ -156,87 +158,92 @@ const sowItems = useMemo(() => {
   }
 
   return (
-    <div style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
-      <div
-        style={{
-          marginBottom: 24,
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 16,
-          flexWrap: "wrap",
-        }}
-      >
+    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+      {/* Header */}
+      <div style={{ marginBottom: 20, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <div style={{ marginBottom: 8 }}>
             <Link href="/estimator/sessions" style={{ color: "#627286", textDecoration: "none" }}>
               ← Back to Sessions
             </Link>
           </div>
-          <h1 style={{ margin: 0, fontSize: 32 }}>
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "#0f1623" }}>
             {session.company_name || "Untitled Session"}
           </h1>
-          <p style={{ marginTop: 8, color: "#627286" }}>
-            Primary Contact: {session.primary_contact || "—"}
+          <p style={{ marginTop: 6, color: "#627286", margin: "6px 0 0", fontSize: 14 }}>
+            Contact: {session.primary_contact || "—"}
           </p>
         </div>
 
-        <div
-          style={{
-            background: "#ffffff",
-            border: "1px solid #d8e1ec",
-            borderRadius: 16,
-            padding: 16,
-            minWidth: 280,
-          }}
-        >
-          <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ background: "#ffffff", border: "1px solid #d8e1ec", borderRadius: 16, padding: "14px 18px", minWidth: 260 }}>
+          <div style={{ display: "grid", gap: 8 }}>
             <SummaryRow label="Estimated Hours" value={`${session.estimated_hours} hrs`} />
             <SummaryRow label="Tier" value={session.tier} />
-            <SummaryRow label="Timeline" value={session.timeline || "—"} />
             <SummaryRow label="Blockers" value={String(blockers.length)} />
-			<SummaryRow label="SOW Items" value={String(sowItems.length)} />
-            <SummaryRow label="Submitted" value={new Date(session.submitted_at).toLocaleString()} />
+            <SummaryRow label="SOW Items" value={String(sowItems.length)} />
           </div>
         </div>
       </div>
-<div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-  <Link
-    href={`/estimator/edit/${session.id}`}
-    style={{
-      display: "inline-block",
-      padding: "10px 16px",
-      borderRadius: 12,
-      border: "1px solid #d8e1ec",
-      background: "#ffffff",
-      color: "#455468",
-      fontWeight: 600,
-      textDecoration: "none",
-    }}
-  >
-    Continue Editing →
-  </Link>
-  {session.intake_notes && (
-    <button
-      type="button"
-      onClick={copyEditLink}
-      style={{
-        display: "inline-block",
-        padding: "10px 16px",
-        borderRadius: 12,
-        border: editLinkCopied ? "1px solid #c0e8d0" : "1px solid #d8e1ec",
-        background: editLinkCopied ? "#edf8f2" : "#ffffff",
-        color: editLinkCopied ? "#1f9d55" : "#455468",
-        fontWeight: 600,
-        cursor: "pointer",
-        fontFamily: "inherit",
-        fontSize: "inherit",
-      }}
-    >
-      {editLinkCopied ? "✓ Link Copied!" : "🔗 Copy Edit Link"}
-    </button>
-  )}
-</div>
+
+      {/* Action buttons */}
+      <div style={{ marginBottom: 20, display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <Link
+          href={`/estimator/edit/${session.id}`}
+          style={{ display: "inline-block", padding: "9px 16px", borderRadius: 12, border: "1px solid #d8e1ec", background: "#ffffff", color: "#455468", fontWeight: 600, textDecoration: "none", fontSize: 13.5 }}
+        >
+          Continue Editing →
+        </Link>
+        {session.intake_notes && (
+          <button
+            type="button"
+            onClick={copyEditLink}
+            style={{
+              padding: "9px 16px", borderRadius: 12,
+              border: editLinkCopied ? "1px solid #c0e8d0" : "1px solid #d8e1ec",
+              background: editLinkCopied ? "#edf8f2" : "#ffffff",
+              color: editLinkCopied ? "#1f9d55" : "#455468",
+              fontWeight: 600, cursor: "pointer", fontFamily: "inherit", fontSize: 13.5,
+            }}
+          >
+            {editLinkCopied ? "✓ Link Copied!" : "🔗 Copy Edit Link"}
+          </button>
+        )}
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", gap: 2, borderBottom: "2px solid #edf2f7", marginBottom: 24 }}>
+        {(["session", "project"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            style={{
+              padding: "10px 20px",
+              border: "none",
+              background: "transparent",
+              fontFamily: "inherit",
+              fontSize: 14,
+              fontWeight: activeTab === tab ? 700 : 500,
+              color: activeTab === tab ? "#2f6fed" : "#627286",
+              borderBottom: `2px solid ${activeTab === tab ? "#2f6fed" : "transparent"}`,
+              marginBottom: -2,
+              cursor: "pointer",
+              transition: "color 0.15s",
+              textTransform: "capitalize",
+            }}
+          >
+            {tab === "session" ? "Session Details" : "Project Tracker"}
+          </button>
+        ))}
+      </div>
+
+      {/* Project tab */}
+      {activeTab === "project" && (
+        <ProjectTab sessionId={session.id} estimatedHours={session.estimated_hours} />
+      )}
+
+      {/* Session details tab */}
+      {activeTab === "session" && (<>
 
       {(blockers.length > 0 || sowItems.length > 0) && (
   <div
@@ -376,6 +383,8 @@ const sowItems = useMemo(() => {
           </div>
         ))}
       </div>
+
+      </>)}
     </div>
   );
 }

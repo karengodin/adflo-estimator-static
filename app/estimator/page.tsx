@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import ProjectTab from "./sessions/[id]/ProjectTab";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -476,7 +477,7 @@ export default function EstimatorPage() {
   const [notes, setNotes] = useState("");
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [activeTab, setActiveTab] = useState<"questionnaire" | "levers" | "srd">("questionnaire");
+  const [activeTab, setActiveTab] = useState<"questionnaire" | "levers" | "srd" | "project">("questionnaire");
   const [saveStatus, setSaveStatus] = useState<"" | "saving" | "saved">("");
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -1482,9 +1483,9 @@ const saveLogic = async () => {
           {/* Tab bar */}
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "12px 24px", borderBottom: "1px solid #dde5ef", background: "rgba(255,255,255,0.9)" }}>
             <span style={{ fontSize: 12, fontWeight: 700, background: "#eaf1ff", color: "#2f6fed", padding: "5px 12px", borderRadius: 999, border: "1px solid #cddcff", marginRight: 8 }}>🔧 Team View</span>
-            {(["questionnaire", "levers", "srd"] as const).map((t) => (
+            {(["questionnaire", "levers", "srd", "project"] as const).map((t) => (
               <button key={t} onClick={() => setActiveTab(t)} style={{ ...tabStyle, ...(activeTab === t ? activeTabStyle : {}) }}>
-                {t === "questionnaire" ? "Questionnaire" : t === "levers" ? "🎛 Levers" : "📄 SRD"}
+                {t === "questionnaire" ? "Questionnaire" : t === "levers" ? "🎛 Levers" : t === "srd" ? "📄 SRD" : "🏗 Project"}
               </button>
             ))}
             <button
@@ -1760,6 +1761,19 @@ const saveLogic = async () => {
                   </div>
                 )}
               </>
+            )}
+
+            {/* Project tab */}
+            {activeTab === "project" && (
+              currentSession
+                ? <ProjectTab sessionId={currentSession.id} estimatedHours={currentSession.estimated_hours} />
+                : (
+                  <div style={{ padding: "64px 0", textAlign: "center", color: "#8a9bb0" }}>
+                    <div style={{ fontSize: 32, marginBottom: 12 }}>🏗️</div>
+                    <div style={{ fontWeight: 700, color: "#455468", marginBottom: 8, fontSize: 16 }}>No session loaded</div>
+                    <div style={{ fontSize: 14 }}>Save the questionnaire first to start a project.</div>
+                  </div>
+                )
             )}
           </div>
         </div>

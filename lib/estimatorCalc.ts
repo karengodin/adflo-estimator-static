@@ -1,0 +1,132 @@
+type QuestionRow = {
+  id: number;
+  impl_category: string | null;
+  weight: number | null;
+  question_type: string;
+  is_risk_multiplier: boolean | null;
+  risk_multiplier_value: number | null;
+  sort_order: number;
+};
+
+type LogicSettings = {
+  product_hour_rate?: number | null;
+  connector_hour_rate?: number | null;
+};
+
+export type EstimateBreakdown = {
+  formConfiguration: number;
+  workflowConfiguration: number;
+  integrationConfiguration: number;
+  financialConfiguration: number;
+  userPermissions: number;
+  qaAndTesting: number;
+  uatSupport: number;
+  programManagement: number;
+  riskBuffer: number;
+  total: number;
+};
+
+export function calcEstimateFromAnswers(
+  answers: Record<string, string>,
+  questions: QuestionRow[],
+  logicSettings: LogicSettings
+): EstimateBreakdown {
+  const bySort = (n: number) => questions.find((q) => q.sort_order === n);
+  const productHourRate   = logicSettings.product_hour_rate   ?? 4;
+  const connectorHourRate = logicSettings.connector_hour_rate ?? 12;
+
+  const hours: Record<string, number> = {};
+  const add = (cat: string | null | undefined, h: number) => {
+    if (!cat || h <= 0) return;
+    hours[cat] = (hours[cat] ?? 0) + h;
+  };
+
+  // yesno non-risk questions answered "Yes" → accumulate by impl_category
+  for (const q of questions) {
+    if (q.is_risk_multiplier || q.question_type !== "yesno") continue;
+    if (answers[String(q.id)] === "Yes") add(q.impl_category, q.weight ?? 0);
+  }
+
+  // Product hours → Form Configuration (Q13 = product count, Q14 = flights modifier)
+  const q13 = bySort(13);
+  const q14 = bySort(14);
+  if (q13) {
+    const count = parseInt(answers[String(q13.id)] || "0", 10) || 0;
+    if (count > 0) {
+      let p: number;
+      if (count <= 3)      p = count * productHourRate;
+      else if (count <= 8) p = count * (productHourRate * 0.75);
+      else                 p = count * (productHourRate * 0.5);
+      if (q14 && answers[String(q14.id)] === "Yes") p *= 1.5;
+      add("Form Configuration", Math.round(p));
+    }
+  }
+
+  // Connector hours → Integration Configuration (Q12 = push connector count)
+  const q12 = bySort(12);
+  if (q12) {
+    const count = parseInt(answers[String(q12.id)] || "0", 10) || 0;
+    add("Integration Configuration", count * connectorHourRate);
+  }
+
+  // Subtotal before risk multipliers
+  const subtotal = Object.values(hours).reduce((s, v) => s + v, 0);
+
+  // Org-readiness risk multipliers (stacked multiplicatively)
+  const q23 = bySort(23); const q24 = bySort(24);
+  const q25 = bySort(25); const q26 = bySort(26);
+
+  const hasIntegrations = questions
+    .filter((q) => q.sort_order >= 7 && q.sort_order <= 12)
+    .some((q) => {
+      const a = answers[String(q.id)];
+      return q.question_type === "number" ? parseInt(a || "0", 10) > 0 : a === "Yes";
+    });
+
+  let multiplier = 1.0;
+  if (q23 && answers[String(q23.id)] === "No") multiplier *= 1.15;
+  if (q24 && answers[String(q24.id)] === "No") multiplier *= 1.10;
+  if (q25 && answers[String(q25.id)] === "No") multiplier *= 1.20;
+  if (q26 && answers[String(q26.id)] === "No" && hasIntegrations) multiplier *= 1.10;
+
+  const total = Math.round(subtotal * multiplier);
+
+  // Derive overhead categories
+  const workScope = (hours["Form Configuration"]        ?? 0)
+                  + (hours["Workflow Configuration"]    ?? 0)
+                  + (hours["Integration Configuration"] ?? 0)
+                  + (hours["Financial Configuration"]   ?? 0);
+
+  const qaAndTesting      = Math.round(workScope * 0.10);
+  const uatSupport        = Math.round(workScope * 0.05);
+  const programManagement = (hours["Program Management"] ?? 0) + Math.round(total * 0.10);
+  const riskBuffer        = Math.max(0, total - subtotal);
+
+  return {
+    formConfiguration:        hours["Form Configuration"]        ?? 0,
+    workflowConfiguration:    hours["Workflow Configuration"]    ?? 0,
+    integrationConfiguration: hours["Integration Configuration"] ?? 0,
+    financialConfiguration:   hours["Financial Configuration"]   ?? 0,
+    userPermissions:          hours["User & Permission Setup"]   ?? 0,
+    qaAndTesting,
+    uatSupport,
+    programManagement,
+    riskBuffer,
+    total,
+  };
+}
+
+/** Maps EstimateBreakdown camelCase keys → proper-cased keys expected by distributeHours(). */
+export function breakdownToHoursByCategory(b: EstimateBreakdown): Record<string, number> {
+  return {
+    "Form Configuration":        b.formConfiguration,
+    "Workflow Configuration":    b.workflowConfiguration,
+    "Integration Configuration": b.integrationConfiguration,
+    "Financial Configuration":   b.financialConfiguration,
+    "User & Permission Setup":   b.userPermissions,
+    "QA & Testing":              b.qaAndTesting,
+    "UAT Support":               b.uatSupport,
+    "Program Management":        b.programManagement,
+    "Risk Buffer":               b.riskBuffer,
+  };
+}
