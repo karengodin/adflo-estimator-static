@@ -83,6 +83,7 @@ export default function ProjectTab({
 }) {
   const [project, setProject] = useState<Project | null | undefined>(undefined); // undefined = loading
   const [versions, setVersions] = useState<EstimateVersion[]>([]);
+  const [varianceRows, setVarianceRows] = useState<{ category: string; estimated_hours: number; actual_hours: number }[]>([]);
   const [creating, setCreating] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [showVersionForm, setShowVersionForm] = useState(false);
@@ -100,6 +101,11 @@ export default function ProjectTab({
     const vers = await versRes.json();
     setProject(proj); // null if no project
     setVersions(Array.isArray(vers) ? vers : []);
+
+    if (proj?.id) {
+      const varRes = await fetch(`/api/estimator/projects/${proj.id}/variance`);
+      if (varRes.ok) setVarianceRows(await varRes.json());
+    }
   }, [sessionId]);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -111,6 +117,8 @@ export default function ProjectTab({
     if (res.ok) {
       const updatedSummary: HoursSummary[] = await res.json();
       setProject((p) => p ? { ...p, hours_summary: updatedSummary } : p);
+      const varRes = await fetch(`/api/estimator/projects/${project.id}/variance`);
+      if (varRes.ok) setVarianceRows(await varRes.json());
     }
     setRecalculating(false);
   }, [project]);
@@ -269,16 +277,12 @@ export default function ProjectTab({
     hoursByPhase[h.phase_id].push(h);
   }
 
-  // Aggregate estimated and actual hours across all phases, grouped by category
-  const catEst: Record<string, number> = {};
-  const catAct: Record<string, number> = {};
-  for (const h of project.hours_summary) {
-    catEst[h.category] = (catEst[h.category] ?? 0) + h.estimated_hours;
-    catAct[h.category] = (catAct[h.category] ?? 0) + h.actual_hours;
-  }
-  const allCats = [...new Set([...Object.keys(catEst), ...Object.keys(catAct)])];
-  const totalEst = Object.values(catEst).reduce((s, v) => s + v, 0) || estimatedHours;
-  const totalAct = Object.values(catAct).reduce((s, v) => s + v, 0);
+  // Variance report data: aggregated from dedicated server-side query
+  const allCats = varianceRows.map((r) => r.category);
+  const catEst: Record<string, number> = Object.fromEntries(varianceRows.map((r) => [r.category, r.estimated_hours]));
+  const catAct: Record<string, number> = Object.fromEntries(varianceRows.map((r) => [r.category, r.actual_hours]));
+  const totalEst = varianceRows.reduce((s, r) => s + r.estimated_hours, 0) || estimatedHours;
+  const totalAct = varianceRows.reduce((s, r) => s + r.actual_hours, 0);
   const overallVariance = totalEst - totalAct;
 
   // Answers-changed banner: compare current estimatedHours with latest version

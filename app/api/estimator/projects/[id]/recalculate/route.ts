@@ -23,7 +23,7 @@ export async function PATCH(
     supabaseServer.from("questions").select("id, impl_category, weight, question_type, is_risk_multiplier, risk_multiplier_value, sort_order").eq("active", true),
     supabaseServer.from("implementation_phases").select("id, phase_name").eq("project_id", id),
     supabaseServer.from("hours_summary").select("id, phase_id, category").eq("project_id", id),
-    supabaseServer.from("logic_settings").select("product_hour_rate, connector_hour_rate").eq("id", "global").single(),
+    supabaseServer.from("logic_settings").select("product_hour_rate, connector_hour_rate, risk_multipliers").eq("id", "global").single(),
   ]);
 
   const answers   = (sessionRes.data?.answers ?? {}) as Record<string, string>;

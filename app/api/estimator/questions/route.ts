@@ -11,6 +11,7 @@ type ConditionalLogic = {
 type DbQuestion = {
   id: number;
   cat: string;
+  impl_category: string | null;
   q: string;
   trigger: string;
   weight: number;
@@ -32,6 +33,7 @@ function toUi(row: DbQuestion) {
   return {
     id:                   row.id,
     category:             row.cat,
+    impl_category:        row.impl_category ?? null,
     question:             row.q,
     trigger:              row.trigger,
     weight:               row.weight,
@@ -54,6 +56,7 @@ function toDb(q: ReturnType<typeof toUi>, index: number) {
   return {
     id:                   q.id,
     cat:                  q.category,
+    impl_category:        q.impl_category ?? null,
     q:                    q.question,
     trigger:              q.trigger,
     weight:               q.weight,
@@ -73,7 +76,7 @@ function toDb(q: ReturnType<typeof toUi>, index: number) {
 }
 
 const SELECT =
-  "id, cat, q, trigger, weight, can_remove, lever_name, lever_desc, sort_order, active, blocker, sow, question_type, conditional_logic, is_risk_multiplier, risk_multiplier_value, risk_direction";
+  "id, cat, impl_category, q, trigger, weight, can_remove, lever_name, lever_desc, sort_order, active, blocker, sow, question_type, conditional_logic, is_risk_multiplier, risk_multiplier_value, risk_direction";
 
 // GET — return all active questions ordered by sort_order
 export async function GET() {

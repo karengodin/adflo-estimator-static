@@ -8,6 +8,7 @@ import ProjectTab from "./sessions/[id]/ProjectTab";
 type Question = {
   id: number;
   category: string;
+  impl_category: string | null;
   question: string;
   trigger: string;
   weight: number;
@@ -53,6 +54,7 @@ type Logic = {
   tiers: { name: string; minHours: number; timeline: string }[];
   productHourRate: number;
   connectorHourRate: number;
+  riskMultipliers: { sort_order: number; condition: string; multiplier: number }[];
 };
 
 type Screen = "loading" | "role" | "questionnaire" | "complete" | "team-dashboard" | "team-session";
@@ -98,6 +100,12 @@ const DEFAULT_LOGIC: Logic = {
   ],
   productHourRate:   4,
   connectorHourRate: 12,
+  riskMultipliers: [
+    { sort_order: 23, condition: "No", multiplier: 1.15 },
+    { sort_order: 24, condition: "No", multiplier: 1.10 },
+    { sort_order: 25, condition: "No", multiplier: 1.20 },
+    { sort_order: 26, condition: "No", multiplier: 1.10 },
+  ],
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -186,7 +194,7 @@ function calcEstimate(questions: Question[], answers: Record<string, string>, lo
 
   const subtotal = base + products + connectors;
 
-  // 4. Org readiness multipliers (stack multiplicatively)
+  // 4. Org readiness multipliers (stack multiplicatively, driven by logic.riskMultipliers)
   const q23 = bySort(23); const q24 = bySort(24);
   const q25 = bySort(25); const q26 = bySort(26);
 
@@ -198,10 +206,13 @@ function calcEstimate(questions: Question[], answers: Record<string, string>, lo
     });
 
   let multiplier = 1.0;
-  if (q23 && answers[String(q23.id)] === "No") multiplier *= 1.15;
-  if (q24 && answers[String(q24.id)] === "No") multiplier *= 1.10;
-  if (q25 && answers[String(q25.id)] === "No") multiplier *= 1.20;
-  if (q26 && answers[String(q26.id)] === "No" && hasIntegrations) multiplier *= 1.10;
+  for (const rm of (logic.riskMultipliers ?? [])) {
+    const q = bySort(rm.sort_order);
+    if (!q) continue;
+    if (answers[String(q.id)] !== rm.condition) continue;
+    if (rm.sort_order === 26 && !hasIntegrations) continue;
+    multiplier *= rm.multiplier;
+  }
 
   const expected = Math.round(subtotal * multiplier);
 
@@ -566,6 +577,10 @@ export default function EstimatorPage() {
     return sessions.filter((s) => (s.company_name || "").toLowerCase().includes(q));
   }, [sessions, sessionSearch]);
 
+  const implCategoryOptions = useMemo(() =>
+    [...new Set(questionsEdit.map((q) => q.impl_category).filter((c): c is string => c !== null))].sort(),
+  [questionsEdit]);
+
   // True when displayed SRD was generated with different names than current inputs
   const srdIsStale = useMemo(() => {
     if (!srdData) return false;
@@ -710,6 +725,7 @@ const addQuestion = () => {
       {
         id: Date.now(),
         category: "New",
+        impl_category: null,
         question: "New question",
         trigger: "Yes",
         weight: 1,
@@ -1264,6 +1280,49 @@ const saveLogic = async () => {
               </div>
             </div>
 
+            {/* Risk Multipliers panel */}
+            <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Risk Multipliers</div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr>{["Question", "Trigger", "Multiplier"].map((h) => <th key={h} style={{ ...thStyle, padding: "6px 8px" }}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {(logicEdit.riskMultipliers ?? []).map((rm, i) => {
+                    const q = questionsEdit.find((x) => x.display_order === rm.sort_order);
+                    const pct = Math.round((rm.multiplier - 1) * 100);
+                    return (
+                      <tr key={rm.sort_order}>
+                        <td style={{ padding: "8px 8px", color: "#455468", maxWidth: 360 }}>
+                          {q ? q.question : `Sort order ${rm.sort_order}`}
+                          {rm.sort_order === 26 && <span style={{ marginLeft: 6, fontSize: 10, color: "#8a9bb0" }}>(only when integrations in scope)</span>}
+                        </td>
+                        <td style={{ padding: "8px 8px", color: "#8a9bb0", whiteSpace: "nowrap" }}>if {rm.condition}</td>
+                        <td style={{ padding: "8px 8px", whiteSpace: "nowrap" }}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="1"
+                            max="2"
+                            value={rm.multiplier}
+                            onChange={(e) => setLogicEdit((prev) => {
+                              const rms = [...(prev.riskMultipliers ?? [])];
+                              rms[i] = { ...rms[i], multiplier: parseFloat(e.target.value) || 1 };
+                              return { ...prev, riskMultipliers: rms };
+                            })}
+                            style={{ ...logicInputStyle, width: 72 }}
+                          />
+                          <span style={{ fontSize: 11, color: pct > 0 ? "#b7791f" : "#8a9bb0", marginLeft: 6 }}>
+                            {pct > 0 ? "+" : ""}{pct}%
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
             {/* Questions table */}
             <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, overflow: "hidden" }}>
               <div style={{ padding: "16px 22px", borderBottom: "1px solid #dde5ef", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1274,7 +1333,7 @@ const saveLogic = async () => {
 </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "#f8fafc" }}>{["#", "", "Category", "Question", "Trigger", "Wt", "Removable", "Blocker", "SOW", ""].map((h) => <th key={h} style={{ ...thStyle, padding: "8px 12px" }}>{h}</th>)}</tr></thead>
+                  <thead><tr style={{ background: "#f8fafc" }}>{["#", "", "Category", "Question", "Trigger", "Wt", "Impl. Category", "Removable", "Blocker", "SOW", "Risk ×", ""].map((h) => <th key={h} style={{ ...thStyle, padding: "8px 12px" }}>{h}</th>)}</tr></thead>
                   <tbody>
                     {questionsEdit.map((q, i) => (
                       <tr key={q.id} style={{ borderBottom: "1px solid #edf2f7" }}>
@@ -1317,6 +1376,18 @@ const saveLogic = async () => {
     style={{ width: 60, padding: "4px 6px", fontSize: 12 }}
   />
 </td>
+                        <td style={{ padding: "8px 12px" }}>
+  <select
+    value={q.impl_category ?? ""}
+    onChange={(e) => updateQuestionField(i, "impl_category", e.target.value || null)}
+    style={{ fontSize: 12, padding: "3px 4px", maxWidth: 160 }}
+  >
+    <option value="">—</option>
+    {implCategoryOptions.map((cat) => (
+      <option key={cat} value={cat}>{cat}</option>
+    ))}
+  </select>
+</td>
                         <td style={{ padding: "8px 12px", textAlign: "center" }}>
   <input
     type="checkbox"
@@ -1337,6 +1408,9 @@ const saveLogic = async () => {
     checked={q.sow}
     onChange={(e) => updateQuestionField(i, "sow", e.target.checked)}
   />
+</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center" }}>
+  <input type="checkbox" checked={q.is_risk_multiplier} readOnly style={{ cursor: "default", opacity: 0.7 }} />
 </td>
 <td style={{ padding: "8px 12px" }}>
   <button

@@ -11,6 +11,7 @@ type QuestionRow = {
 type LogicSettings = {
   product_hour_rate?: number | null;
   connector_hour_rate?: number | null;
+  risk_multipliers?: Array<{ sort_order: number; condition: string; multiplier: number }> | null;
 };
 
 export type EstimateBreakdown = {
@@ -73,9 +74,6 @@ export function calcEstimateFromAnswers(
   const subtotal = Object.values(hours).reduce((s, v) => s + v, 0);
 
   // Org-readiness risk multipliers (stacked multiplicatively)
-  const q23 = bySort(23); const q24 = bySort(24);
-  const q25 = bySort(25); const q26 = bySort(26);
-
   const hasIntegrations = questions
     .filter((q) => q.sort_order >= 7 && q.sort_order <= 12)
     .some((q) => {
@@ -83,11 +81,21 @@ export function calcEstimateFromAnswers(
       return q.question_type === "number" ? parseInt(a || "0", 10) > 0 : a === "Yes";
     });
 
+  const riskMultipliers = logicSettings.risk_multipliers ?? [
+    { sort_order: 23, condition: "No", multiplier: 1.15 },
+    { sort_order: 24, condition: "No", multiplier: 1.10 },
+    { sort_order: 25, condition: "No", multiplier: 1.20 },
+    { sort_order: 26, condition: "No", multiplier: 1.10 },
+  ];
+
   let multiplier = 1.0;
-  if (q23 && answers[String(q23.id)] === "No") multiplier *= 1.15;
-  if (q24 && answers[String(q24.id)] === "No") multiplier *= 1.10;
-  if (q25 && answers[String(q25.id)] === "No") multiplier *= 1.20;
-  if (q26 && answers[String(q26.id)] === "No" && hasIntegrations) multiplier *= 1.10;
+  for (const rm of riskMultipliers) {
+    const q = bySort(rm.sort_order);
+    if (!q) continue;
+    if (answers[String(q.id)] !== rm.condition) continue;
+    if (rm.sort_order === 26 && !hasIntegrations) continue;
+    multiplier *= rm.multiplier;
+  }
 
   const total = Math.round(subtotal * multiplier);
 

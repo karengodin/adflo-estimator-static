@@ -16,7 +16,7 @@ function tiersToDb(tiers: UiTier[]): DbTier[] {
 export async function GET() {
   const { data, error } = await supabaseServer
     .from("logic_settings")
-    .select("base_hours, best_case_multiplier, worst_case_multiplier, tiers, product_hour_rate, connector_hour_rate")
+    .select("base_hours, best_case_multiplier, worst_case_multiplier, tiers, product_hour_rate, connector_hour_rate, risk_multipliers")
     .eq("id", "global")
     .single();
 
@@ -25,13 +25,20 @@ export async function GET() {
     return NextResponse.json({ error: error?.message ?? "Not found" }, { status: 500 });
   }
 
+  const d = data as Record<string, unknown>;
   return NextResponse.json({
     baseHours:            data.base_hours,
     bestCaseMultiplier:   data.best_case_multiplier,
     worstCaseMultiplier:  data.worst_case_multiplier,
     tiers:                tiersToUi(data.tiers as DbTier[]),
-    productHourRate:      (data as Record<string, unknown>).product_hour_rate as number ?? 4,
-    connectorHourRate:    (data as Record<string, unknown>).connector_hour_rate as number ?? 12,
+    productHourRate:      d.product_hour_rate as number ?? 4,
+    connectorHourRate:    d.connector_hour_rate as number ?? 12,
+    riskMultipliers:      (d.risk_multipliers as Array<{ sort_order: number; condition: string; multiplier: number }> | null) ?? [
+      { sort_order: 23, condition: "No", multiplier: 1.15 },
+      { sort_order: 24, condition: "No", multiplier: 1.10 },
+      { sort_order: 25, condition: "No", multiplier: 1.20 },
+      { sort_order: 26, condition: "No", multiplier: 1.10 },
+    ],
   });
 }
 
@@ -44,6 +51,7 @@ export async function PATCH(req: NextRequest) {
     tiers: UiTier[];
     productHourRate?: number;
     connectorHourRate?: number;
+    riskMultipliers?: Array<{ sort_order: number; condition: string; multiplier: number }>;
   };
 
   const patch: Record<string, unknown> = {
@@ -55,6 +63,7 @@ export async function PATCH(req: NextRequest) {
   };
   if (body.productHourRate   !== undefined) patch.product_hour_rate   = body.productHourRate;
   if (body.connectorHourRate !== undefined) patch.connector_hour_rate = body.connectorHourRate;
+  if (body.riskMultipliers   !== undefined) patch.risk_multipliers    = body.riskMultipliers;
 
   const { error } = await supabaseServer
     .from("logic_settings")
