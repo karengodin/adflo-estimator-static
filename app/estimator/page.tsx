@@ -1962,11 +1962,14 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
                     {srdData.risks_and_flags.length > 0 && (
                       <div style={{ background: "#fff8e8", border: "1px solid #f3e0a3", borderRadius: 16, padding: "16px 20px" }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: "#8a6417", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>⚠️ Risks & Scope Flags</div>
-                        {srdData.risks_and_flags.map((r, i) => (
-                          <div key={i} style={{ fontSize: 13, color: "#8a6417", paddingLeft: 14, position: "relative", marginBottom: 6 }}>
-                            <span style={{ position: "absolute", left: 0 }}>•</span>{r}
-                          </div>
-                        ))}
+                        {srdData.risks_and_flags.map((r, i) => {
+                          const text = typeof r === "string" ? r : (r as { flag?: string; detail?: string }).flag ?? JSON.stringify(r);
+                          return (
+                            <div key={i} style={{ fontSize: 13, color: "#8a6417", paddingLeft: 14, position: "relative", marginBottom: 6 }}>
+                              <span style={{ position: "absolute", left: 0 }}>•</span>{text}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 

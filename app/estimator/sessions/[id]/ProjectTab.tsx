@@ -105,7 +105,7 @@ export default function ProjectTab({
   const [capacityNarrative, setCapacityNarrative] = useState<string | null>(null);
   const [capacityError, setCapacityError] = useState<string | null>(null);
   const [narrativeLoading, setNarrativeLoading] = useState(false);
-  const narrativeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const narrativeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // kept for cleanup safety
 
   const loadData = useCallback(async () => {
     const [projRes, versRes] = await Promise.all([
@@ -157,53 +157,44 @@ export default function ProjectTab({
     setLocalHours(init);
   }, [project]);
 
-  // Generate capacity narrative (debounced 800ms)
-  useEffect(() => {
+  async function fetchNarrative() {
     if (!project) return;
     const wkCap = assignedIMs.reduce((s, im) => s + im.hoursPerWeek, 0);
-    if (wkCap === 0) { setCapacityNarrative(null); setCapacityError(null); return; }
-
-    // Compute locally so we don't close over derived vars that may be in TDZ
     const tEst = varianceRows.reduce((s, r) => s + r.estimated_hours, 0) || estimatedHours;
     const tier = tEst >= 300 ? "Enterprise" : tEst >= 150 ? "Mid-Market" : "Starter";
-    const adjWeeks = Math.ceil(tEst / wkCap);
+    const adjWeeks = wkCap > 0 ? Math.ceil(tEst / wkCap) : 0;
     const topCats = [...varianceRows]
       .sort((a, b) => b.estimated_hours - a.estimated_hours)
       .slice(0, 4)
       .map((r) => ({ category: r.category, estimatedHours: r.estimated_hours }));
 
-    if (narrativeTimerRef.current) clearTimeout(narrativeTimerRef.current);
-    narrativeTimerRef.current = setTimeout(async () => {
-      setNarrativeLoading(true);
-      setCapacityError(null);
-      try {
-        const res = await fetch(`/api/projects/${project.id}/capacity-narrative`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            totalHours: tEst,
-            weeklyCapacity: wkCap,
-            adjustedWeeks: adjWeeks,
-            assignedIMs,
-            projectTier: tier,
-            topCategories: topCats,
-          }),
-        });
-        const data = await res.json() as { narrative: string | null; error?: string };
-        if (data.narrative) {
-          setCapacityNarrative(data.narrative);
-        } else {
-          setCapacityError(data.error ?? "AI narrative unavailable");
-        }
-      } catch {
-        setCapacityError("Could not reach the AI service");
-      } finally {
-        setNarrativeLoading(false);
+    setNarrativeLoading(true);
+    setCapacityError(null);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/capacity-narrative`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          totalHours: tEst,
+          weeklyCapacity: wkCap,
+          adjustedWeeks: adjWeeks,
+          assignedIMs,
+          projectTier: tier,
+          topCategories: topCats,
+        }),
+      });
+      const data = await res.json() as { narrative: string | null; error?: string };
+      if (data.narrative) {
+        setCapacityNarrative(data.narrative);
+      } else {
+        setCapacityError(data.error ?? "AI narrative unavailable");
       }
-    }, 800);
-    return () => { if (narrativeTimerRef.current) clearTimeout(narrativeTimerRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignedIMs, project?.id]);
+    } catch {
+      setCapacityError("Could not reach the AI service");
+    } finally {
+      setNarrativeLoading(false);
+    }
+  }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -714,6 +705,19 @@ export default function ProjectTab({
             <OverviewStat label="Total Hours" value={`${totalEstForNarrative}`} sub="hrs estimated" />
             <OverviewStat label="Weekly Capacity" value={`${weeklyCapacity}`} sub="hrs / week" />
             <OverviewStat label="Adjusted Timeline" value={`${adjustedWeeks}`} sub="weeks" />
+          </div>
+        )}
+
+        {/* Get assessment button */}
+        {assignedIMs.length > 0 && !narrativeLoading && (
+          <div style={{ marginBottom: 14 }}>
+            <button
+              type="button"
+              onClick={fetchNarrative}
+              style={{ ...smallBtnStyle, fontSize: 13 }}
+            >
+              Get assessment
+            </button>
           </div>
         )}
 

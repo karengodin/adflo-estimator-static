@@ -81,7 +81,7 @@ export async function GET() {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 1000,
       system: "You are an implementation estimation advisor. Given variance data from completed project phases and current logic settings, suggest specific adjustments to improve estimate accuracy. Be conservative — only suggest changes where the pattern is consistent and meaningful. Return a JSON array only, no markdown.",
       messages: [{ role: "user", content: userMessage }],

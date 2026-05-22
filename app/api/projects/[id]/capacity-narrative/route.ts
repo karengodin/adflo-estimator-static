@@ -46,7 +46,7 @@ export async function POST(
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 200,
       system: "You are an implementation capacity advisor for a SaaS onboarding team. Given project scope and team assignment data, write a 2–3 sentence plain-English risk assessment. Be specific and direct. Flag genuine risks only — don't pad with obvious statements. Never use bullet points.",
       messages: [{ role: "user", content: userMessage }],
