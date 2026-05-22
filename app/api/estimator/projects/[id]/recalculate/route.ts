@@ -34,21 +34,10 @@ export async function PATCH(
   }>;
   const logicSettings = logicRes.data ?? {};
 
-  console.log("[recalculate] raw answers:", JSON.stringify(answers, null, 2));
-  console.log("[recalculate] questions fetched:", JSON.stringify(
-    questions.map(q => ({ id: q.id, sort_order: q.sort_order, impl_category: q.impl_category, weight: q.weight, question_type: q.question_type, is_risk_multiplier: q.is_risk_multiplier })),
-    null, 2
-  ));
-
   const breakdown      = calcEstimateFromAnswers(answers, questions, logicSettings);
   const hoursByCategory = breakdownToHoursByCategory(breakdown);
   const totalHours      = breakdown.total;
-
-  console.log("[recalculate] calcEstimateFromAnswers result:", JSON.stringify(breakdown, null, 2));
-  console.log("[recalculate] hoursByCategory for distribution:", JSON.stringify(hoursByCategory, null, 2));
-
-  const distribution = distributeHours(hoursByCategory, totalHours);
-  console.log("[recalculate] distribution:", JSON.stringify(distribution, null, 2));
+  const distribution   = distributeHours(hoursByCategory, totalHours);
 
   // Build lookup maps
   const phaseIdByName: Record<string, string> = {};
@@ -60,7 +49,6 @@ export async function PATCH(
 
   // Upsert hours_summary rows
   const updates: PromiseLike<unknown>[] = [];
-  const writeLog: { phase: string; category: string; estimated_hours: number; action: string }[] = [];
   for (const phaseCfg of PHASE_CONFIG) {
     const phaseId   = phaseIdByName[phaseCfg.name];
     if (!phaseId) continue;
@@ -68,7 +56,6 @@ export async function PATCH(
     for (const category of phaseCfg.categories) {
       const estHours  = (phaseDist as Record<string, number>)[category] ?? 0;
       const summaryId = summaryIdMap[`${phaseId}::${category}`];
-      writeLog.push({ phase: phaseCfg.name, category, estimated_hours: estHours, action: summaryId ? "update" : "insert" });
       if (summaryId) {
         updates.push(
           supabaseServer
@@ -85,7 +72,6 @@ export async function PATCH(
       }
     }
   }
-  console.log("[recalculate] writing to hours_summary:", JSON.stringify(writeLog, null, 2));
   await Promise.all(updates);
 
   // Return refreshed hours_summary

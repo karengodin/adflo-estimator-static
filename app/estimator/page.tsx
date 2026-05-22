@@ -57,6 +57,15 @@ type Logic = {
   riskMultipliers: { sort_order: number; condition: string; multiplier: number }[];
 };
 
+type WeightSuggestion = {
+  setting: string;
+  current: number;
+  suggested: number;
+  reasoning: string;
+  category: string;
+  avgVariancePct: number;
+};
+
 type Screen = "loading" | "role" | "questionnaire" | "complete" | "team-dashboard" | "team-session";
 
 type SrdBreakdownRow = { label: string; hours: number; detail: string[] };
@@ -522,6 +531,17 @@ export default function EstimatorPage() {
   const [logicEdit, setLogicEdit] = useState<Logic>(DEFAULT_LOGIC);
   const [questionsEdit, setQuestionsEdit] = useState<Question[]>([]);
   const [isSavingLogic, setIsSavingLogic] = useState(false);
+
+  // Weight suggestions
+  const [weightSuggestions, setWeightSuggestions] = useState<WeightSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsRan, setSuggestionsRan] = useState(false);
+  const [suggestionsInsufficient, setSuggestionsInsufficient] = useState(false);
+  const [suggestionsProjectCount, setSuggestionsProjectCount] = useState(0);
+  const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
+  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
+  const [appliedKeys, setAppliedKeys] = useState<Set<string>>(new Set());
+  const [editingValues, setEditingValues] = useState<Record<string, string>>({});
   
   // SRD
   const [srdData, setSrdData] = useState<SrdData | null>(null);
@@ -817,6 +837,53 @@ const saveLogic = async () => {
   setQuestions(questionsEdit);
   setIsSavingLogic(false);
   alert("Logic saved");
+};
+
+const runWeightSuggestions = async () => {
+  setSuggestionsLoading(true);
+  setSuggestionsError(null);
+  setSuggestionsRan(true);
+  try {
+    const res = await fetch("/api/estimator/weight-suggestions");
+    const data = await res.json() as {
+      suggestions?: WeightSuggestion[];
+      insufficientData?: boolean;
+      projectCount?: number;
+      error?: string;
+    };
+    if (!res.ok) {
+      setSuggestionsError(data.error ?? `HTTP ${res.status}`);
+      return;
+    }
+    if (data.insufficientData) {
+      setSuggestionsInsufficient(true);
+      setSuggestionsProjectCount(data.projectCount ?? 0);
+      setWeightSuggestions([]);
+    } else {
+      setSuggestionsInsufficient(false);
+      setWeightSuggestions(data.suggestions ?? []);
+      setDismissedKeys(new Set());
+      setAppliedKeys(new Set());
+      setEditingValues({});
+    }
+  } catch {
+    setSuggestionsError("Could not reach the analysis service");
+  } finally {
+    setSuggestionsLoading(false);
+  }
+};
+
+const applySuggestion = async (key: string, setting: string, value: number) => {
+  const res = await fetch("/api/estimator/weight-suggestions/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ setting, value }),
+  });
+  if (res.ok) {
+    setLogicEdit((prev) => ({ ...prev, [setting]: value }));
+    setAppliedKeys((prev) => new Set(prev).add(key));
+    setTimeout(() => setDismissedKeys((prev) => new Set(prev).add(key)), 1500);
+  }
 };
   // Returns a session object with the latest name fields from current state
   const sessionWithCurrentNames = () => ({
@@ -1252,6 +1319,145 @@ const saveLogic = async () => {
         {/* Logic editor tab */}
         {dashTab === "logic" && (
           <div style={{ display: "grid", gap: 18 }}>
+
+            {/* ── Accuracy Review ── */}
+            <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Accuracy Review</div>
+                <button
+                  onClick={runWeightSuggestions}
+                  disabled={suggestionsLoading}
+                  style={{ ...outlineBtnStyle, fontSize: 12, padding: "6px 14px", opacity: suggestionsLoading ? 0.6 : 1 }}
+                >
+                  {suggestionsLoading ? "Analysing…" : "Run analysis"}
+                </button>
+              </div>
+
+              {/* Skeleton */}
+              {suggestionsLoading && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {[80, 60, 72].map((w) => (
+                    <div key={w} style={{ height: 13, width: `${w}%`, background: "#edf2f7", borderRadius: 4, animation: "pulse 1.4s ease-in-out infinite" }} />
+                  ))}
+                </div>
+              )}
+
+              {/* Not yet run */}
+              {!suggestionsLoading && !suggestionsRan && (
+                <div style={{ fontSize: 13, color: "#8a9bb0" }}>Run the analysis to get AI-powered suggestions for improving estimate accuracy.</div>
+              )}
+
+              {/* Error */}
+              {!suggestionsLoading && suggestionsRan && suggestionsError && (
+                <div style={{ borderLeft: "3px solid #f9c0c0", paddingLeft: 12, fontSize: 13, color: "#c94b4b" }}>{suggestionsError}</div>
+              )}
+
+              {/* Insufficient data */}
+              {!suggestionsLoading && suggestionsRan && !suggestionsError && suggestionsInsufficient && (
+                <div style={{ fontSize: 13, color: "#8a9bb0" }}>
+                  Not enough data yet — needs at least 3 projects with a completed phase. Currently have {suggestionsProjectCount}.
+                </div>
+              )}
+
+              {/* Suggestions */}
+              {!suggestionsLoading && suggestionsRan && !suggestionsError && !suggestionsInsufficient && weightSuggestions.length === 0 && (
+                <div style={{ fontSize: 13, color: "#8a9bb0" }}>No adjustments recommended — estimates are tracking well.</div>
+              )}
+
+              {!suggestionsLoading && weightSuggestions.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {weightSuggestions.map((s) => {
+                    const key = `${s.setting}-${s.category}`;
+                    if (dismissedKeys.has(key)) return null;
+                    const isApplied = appliedKeys.has(key);
+                    const isEditing = key in editingValues;
+                    const displayValue = isEditing ? editingValues[key] : String(s.suggested);
+                    const applyValue = isEditing ? (parseFloat(editingValues[key]) || s.suggested) : s.suggested;
+                    const varPct = s.avgVariancePct;
+                    const settingLabel: Record<string, string> = {
+                      productHourRate: "Product hour rate", connectorHourRate: "Connector hour rate",
+                      baseHours: "Base hours", bestCaseMultiplier: "Best case multiplier",
+                      worstCaseMultiplier: "Worst case multiplier",
+                    };
+                    return (
+                      <div key={key} style={{ border: "1px solid #dde5ef", borderRadius: 12, padding: 16 }}>
+                        {/* Header */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#0f1623" }}>{s.category}</span>
+                          <span style={{
+                            fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+                            background: varPct > 0 ? "#fff0f0" : "#edf8f2",
+                            color: varPct > 0 ? "#c94b4b" : "#1f9d55",
+                            border: `1px solid ${varPct > 0 ? "#f9c0c0" : "#c0e8d0"}`,
+                          }}>
+                            {varPct > 0 ? "+" : ""}{varPct}% variance
+                          </span>
+                        </div>
+
+                        {/* Reasoning */}
+                        <div style={{ borderLeft: "3px solid #dde5ef", paddingLeft: 12, marginBottom: 12 }}>
+                          <p style={{ margin: 0, fontSize: 12.5, color: "#627286", lineHeight: 1.55 }}>{s.reasoning}</p>
+                        </div>
+
+                        {/* Setting row */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13 }}>
+                          <span style={{ color: "#8a9bb0" }}>{settingLabel[s.setting] ?? s.setting}</span>
+                          <span style={{ color: "#455468", fontVariantNumeric: "tabular-nums" }}>{s.current}</span>
+                          <span style={{ color: "#b0bfcc" }}>→</span>
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={displayValue}
+                              onChange={(e) => setEditingValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                              style={{ ...logicInputStyle, width: 72 }}
+                              autoFocus
+                            />
+                          ) : (
+                            <span style={{ fontWeight: 700, color: "#2f6fed", fontVariantNumeric: "tabular-nums" }}>{s.suggested}</span>
+                          )}
+                        </div>
+
+                        {/* Buttons */}
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          {isApplied ? (
+                            <span style={{ fontSize: 12, fontWeight: 700, color: "#1f9d55" }}>✓ Applied</span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => applySuggestion(key, s.setting, applyValue)}
+                                style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px", background: "#eaf1ff", color: "#2f6fed", borderColor: "#cddcff" }}
+                              >
+                                Apply
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (isEditing) {
+                                    setEditingValues((prev) => { const n = { ...prev }; delete n[key]; return n; });
+                                  } else {
+                                    setEditingValues((prev) => ({ ...prev, [key]: String(s.suggested) }));
+                                  }
+                                }}
+                                style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px" }}
+                              >
+                                {isEditing ? "Cancel edit" : "Edit value"}
+                              </button>
+                              <button
+                                onClick={() => setDismissedKeys((prev) => new Set(prev).add(key))}
+                                style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px", color: "#8a9bb0" }}
+                              >
+                                Dismiss
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
               <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: 20 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Base Settings</div>

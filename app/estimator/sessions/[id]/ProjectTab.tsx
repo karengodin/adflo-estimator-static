@@ -59,6 +59,14 @@ type EstimateVersion = {
   created_at: string;
 };
 
+type AssignedIM = {
+  id: string;
+  name: string;
+  role: string;
+  hoursPerWeek: number;
+  experienceMultiplier: number;
+};
+
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 const PROJECT_STATUSES = ["planning", "active", "uat", "golive", "closed"] as const;
@@ -91,6 +99,13 @@ export default function ProjectTab({
   const [savingVersion, setSavingVersion] = useState(false);
   const [localHours, setLocalHours] = useState<Record<string, string>>({});
   const autoRecalcDone = useRef(false);
+
+  // Team Capacity
+  const [assignedIMs, setAssignedIMs] = useState<AssignedIM[]>([]);
+  const [capacityNarrative, setCapacityNarrative] = useState<string | null>(null);
+  const [capacityError, setCapacityError] = useState<string | null>(null);
+  const [narrativeLoading, setNarrativeLoading] = useState(false);
+  const narrativeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     const [projRes, versRes] = await Promise.all([
@@ -141,6 +156,54 @@ export default function ProjectTab({
     for (const h of project.hours_summary) init[h.id] = String(h.actual_hours);
     setLocalHours(init);
   }, [project]);
+
+  // Generate capacity narrative (debounced 800ms)
+  useEffect(() => {
+    if (!project) return;
+    const wkCap = assignedIMs.reduce((s, im) => s + im.hoursPerWeek, 0);
+    if (wkCap === 0) { setCapacityNarrative(null); setCapacityError(null); return; }
+
+    // Compute locally so we don't close over derived vars that may be in TDZ
+    const tEst = varianceRows.reduce((s, r) => s + r.estimated_hours, 0) || estimatedHours;
+    const tier = tEst >= 300 ? "Enterprise" : tEst >= 150 ? "Mid-Market" : "Starter";
+    const adjWeeks = Math.ceil(tEst / wkCap);
+    const topCats = [...varianceRows]
+      .sort((a, b) => b.estimated_hours - a.estimated_hours)
+      .slice(0, 4)
+      .map((r) => ({ category: r.category, estimatedHours: r.estimated_hours }));
+
+    if (narrativeTimerRef.current) clearTimeout(narrativeTimerRef.current);
+    narrativeTimerRef.current = setTimeout(async () => {
+      setNarrativeLoading(true);
+      setCapacityError(null);
+      try {
+        const res = await fetch(`/api/projects/${project.id}/capacity-narrative`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            totalHours: tEst,
+            weeklyCapacity: wkCap,
+            adjustedWeeks: adjWeeks,
+            assignedIMs,
+            projectTier: tier,
+            topCategories: topCats,
+          }),
+        });
+        const data = await res.json() as { narrative: string | null; error?: string };
+        if (data.narrative) {
+          setCapacityNarrative(data.narrative);
+        } else {
+          setCapacityError(data.error ?? "AI narrative unavailable");
+        }
+      } catch {
+        setCapacityError("Could not reach the AI service");
+      } finally {
+        setNarrativeLoading(false);
+      }
+    }, 800);
+    return () => { if (narrativeTimerRef.current) clearTimeout(narrativeTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignedIMs, project?.id]);
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -288,6 +351,14 @@ export default function ProjectTab({
   // Answers-changed banner: compare current estimatedHours with latest version
   const latestVersion = versions.find((v) => v.is_current) ?? versions[versions.length - 1];
   const estimateChanged = latestVersion && Math.round(latestVersion.total_hours) !== Math.round(estimatedHours);
+
+  // Team Capacity derived values
+  const totalEstForNarrative = totalEst || estimatedHours;
+  const weeklyCapacity = assignedIMs.reduce((s, im) => s + im.hoursPerWeek, 0);
+  const adjustedWeeks = weeklyCapacity > 0 ? Math.ceil(totalEstForNarrative / weeklyCapacity) : 0;
+  const tierLabelForNarrative =
+    totalEstForNarrative >= 300 ? "Enterprise" :
+    totalEstForNarrative >= 150 ? "Mid-Market" : "Starter";
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -578,7 +649,94 @@ export default function ProjectTab({
         </div>
       </SectionCard>
 
-      {/* ── D: VARIANCE REPORT ── */}
+      {/* ── D: TEAM CAPACITY ── */}
+      <SectionCard title="Team Capacity">
+        {/* IM rows */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+          {assignedIMs.map((im) => (
+            <div key={im.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 130px 28px", gap: 8, alignItems: "center" }}>
+              <input
+                value={im.name}
+                onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, name: e.target.value } : x))}
+                placeholder="IM Name"
+                style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }}
+              />
+              <input
+                value={im.role}
+                onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, role: e.target.value } : x))}
+                placeholder="Role"
+                style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }}
+              />
+              <div style={{ position: "relative" }}>
+                <input
+                  type="number"
+                  min={1}
+                  max={40}
+                  value={im.hoursPerWeek}
+                  onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, hoursPerWeek: Math.max(1, parseInt(e.target.value) || 1) } : x))}
+                  style={{ ...inputStyle, padding: "7px 10px", fontSize: 13, width: "100%" }}
+                />
+                <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#8a9bb0", pointerEvents: "none" }}>hrs/wk</span>
+              </div>
+              <select
+                value={im.experienceMultiplier}
+                onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, experienceMultiplier: parseFloat(e.target.value) } : x))}
+                style={{ ...inputStyle, padding: "7px 10px", fontSize: 13, appearance: "none", cursor: "pointer" }}
+              >
+                <option value={0.75}>0.75× Junior</option>
+                <option value={1.0}>1.0× Mid-level</option>
+                <option value={1.25}>1.25× Senior</option>
+                <option value={1.5}>1.5× Expert</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => setAssignedIMs((prev) => prev.filter((x) => x.id !== im.id))}
+                style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid #f9c0c0", background: "#fff0f0", color: "#c94b4b", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit", flexShrink: 0 }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <div>
+            <button
+              type="button"
+              onClick={() => setAssignedIMs((prev) => [...prev, { id: crypto.randomUUID(), name: "", role: "", hoursPerWeek: 10, experienceMultiplier: 1.0 }])}
+              style={{ ...smallBtnStyle, fontSize: 13 }}
+            >
+              + Add IM
+            </button>
+          </div>
+        </div>
+
+        {/* Summary stats */}
+        {assignedIMs.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 16 }}>
+            <OverviewStat label="Total Hours" value={`${totalEstForNarrative}`} sub="hrs estimated" />
+            <OverviewStat label="Weekly Capacity" value={`${weeklyCapacity}`} sub="hrs / week" />
+            <OverviewStat label="Adjusted Timeline" value={`${adjustedWeeks}`} sub="weeks" />
+          </div>
+        )}
+
+        {/* LLM narrative */}
+        {assignedIMs.length > 0 && (
+          narrativeLoading ? (
+            <div style={{ borderLeft: "3px solid #dde5ef", paddingLeft: 14 }}>
+              <div style={{ height: 13, width: "80%", background: "#edf2f7", borderRadius: 4, marginBottom: 8, animation: "pulse 1.4s ease-in-out infinite" }} />
+              <div style={{ height: 13, width: "60%", background: "#edf2f7", borderRadius: 4, animation: "pulse 1.4s ease-in-out infinite" }} />
+            </div>
+          ) : capacityError ? (
+            <div style={{ borderLeft: "3px solid #f9c0c0", paddingLeft: 14 }}>
+              <p style={{ margin: 0, fontSize: 13, color: "#c94b4b", lineHeight: 1.6 }}>{capacityError}</p>
+            </div>
+          ) : capacityNarrative ? (
+            <div style={{ borderLeft: "3px solid #dde5ef", paddingLeft: 14 }}>
+              <p style={{ margin: 0, fontSize: 13, color: "#627286", lineHeight: 1.6 }}>{capacityNarrative}</p>
+            </div>
+          ) : null
+        )}
+      </SectionCard>
+
+      {/* ── E: VARIANCE REPORT ── */}
       <SectionCard title="Variance Report">
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
