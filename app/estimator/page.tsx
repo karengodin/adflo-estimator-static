@@ -68,7 +68,7 @@ type WeightSuggestion = {
 
 type Screen = "loading" | "role" | "questionnaire" | "complete" | "team-dashboard" | "team-session";
 
-type SrdBreakdownRow = { label: string; hours: number; detail: string[] };
+type SrdBreakdownRow = { category: string; hours: number; details: string };
 
 type SrdData = {
   engagement_overview: string;
@@ -76,10 +76,8 @@ type SrdData = {
   system_architecture: string;
   in_scope: {
     narrative: string;
-    hours_breakdown: {
-      rows: SrdBreakdownRow[];
-      total: number;
-    };
+    hours_breakdown: SrdBreakdownRow[];
+    total_hours: number;
   };
   out_of_scope: string[];
   integration_strategy: string | null;
@@ -420,20 +418,18 @@ function generateTemplateSRD(
     : ["Additional hours based on implementation complexity"];
 
   const rows: SrdBreakdownRow[] = [];
-  if (formTotal     > 0) rows.push({ label: "Form Configuration",       hours: formTotal,     detail: formDetail });
-  if (workflowTotal > 0) rows.push({ label: "Workflow Configuration",    hours: workflowTotal, detail: workflowDetail });
-  if (integTotal    > 0) rows.push({ label: "Integration Configuration", hours: integTotal,    detail: integDetail });
-  if (finTotal      > 0) rows.push({ label: "Financial Configuration",   hours: finTotal,      detail: finDetail });
-  if (userTotal     > 0) rows.push({ label: "User & Permission Setup",   hours: userTotal,     detail: userDetail });
-  rows.push({ label: "QA & Testing",       hours: qaHrs, detail: ["Quality assurance across all configured items"] });
-  rows.push({ label: "Program Management", hours: pmHrs, detail: ["Project oversight and implementation coordination"] });
-  if (riskBuf > 0) rows.push({ label: "Risk Buffer", hours: riskBuf, detail: riskDetail });
+  if (formTotal     > 0) rows.push({ category: "Form Configuration",       hours: formTotal,     details: formDetail.join(" · ") });
+  if (workflowTotal > 0) rows.push({ category: "Workflow Configuration",    hours: workflowTotal, details: workflowDetail.join(" · ") });
+  if (integTotal    > 0) rows.push({ category: "Integration Configuration", hours: integTotal,    details: integDetail.join(" · ") });
+  if (finTotal      > 0) rows.push({ category: "Financial Configuration",   hours: finTotal,      details: finDetail.join(" · ") });
+  if (userTotal     > 0) rows.push({ category: "User & Permission Setup",   hours: userTotal,     details: userDetail.join(" · ") });
+  rows.push({ category: "QA & Testing",       hours: qaHrs, details: "Quality assurance across all configured items" });
+  rows.push({ category: "Program Management", hours: pmHrs, details: "Project oversight and implementation coordination" });
+  if (riskBuf > 0) rows.push({ category: "Risk Buffer", hours: riskBuf, details: riskDetail.join(" · ") });
 
   // ── Out of Scope ──
   const outOfScope = [
     "Active campaign or historical data migration (unless explicitly scoped above)",
-    "Custom margin configuration",
-    "Rate card configuration",
     "Orders reporting",
     "Training beyond UAT support",
   ];
@@ -461,7 +457,8 @@ function generateTemplateSRD(
     system_architecture: arch,
     in_scope: {
       narrative: `The following configuration work is included in this engagement for ${clientName}. All items are based on discovery responses and are subject to change via the change request process.`,
-      hours_breakdown: { rows, total: est.expected },
+      hours_breakdown: rows,
+      total_hours: est.expected,
     },
     out_of_scope: outOfScope,
     integration_strategy: integrationStrategy,
@@ -2001,16 +1998,16 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
                           </tr>
                         </thead>
                         <tbody>
-                          {srdData.in_scope.hours_breakdown.rows.map((row, i) => (
-                            <tr key={row.label} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
-                              <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontWeight: 500, color: "#0f1623" }}>{row.label}</td>
+                          {srdData.in_scope.hours_breakdown.map((row, i) => (
+                            <tr key={row.category} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                              <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontWeight: 500, color: "#0f1623" }}>{row.category}</td>
                               <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "#2f6fed", whiteSpace: "nowrap" }}>{row.hours} hrs</td>
-                              <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", color: "#627286", fontSize: 12 }}>{row.detail.join(" · ")}</td>
+                              <td style={{ padding: "10px 14px", borderBottom: "1px solid #edf2f7", color: "#627286", fontSize: 12 }}>{row.details}</td>
                             </tr>
                           ))}
                           <tr style={{ background: "#eaf1ff" }}>
                             <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1f3a6e" }}>TOTAL</td>
-                            <td style={{ padding: "10px 14px", fontWeight: 800, color: "#1f3a6e", fontVariantNumeric: "tabular-nums" }}>{srdData.in_scope.hours_breakdown.total} hrs</td>
+                            <td style={{ padding: "10px 14px", fontWeight: 800, color: "#1f3a6e", fontVariantNumeric: "tabular-nums" }}>{srdData.in_scope.total_hours} hrs</td>
                             <td style={{ padding: "10px 14px" }}></td>
                           </tr>
                         </tbody>

@@ -70,55 +70,47 @@ export async function POST(req: NextRequest) {
   const totalHours: number = session.estimated_hours;
   const clientName: string = session.client_name || "Client";
 
-  // 4. Build prompt
-  const prompt = `You are generating a Solutions Requirements Definition (SRD) document for a TapClicks AdFlo Order Management & Workflow implementation project.
+  // 4. Build prompts
+  const systemPrompt = `You are a senior implementation consultant at TapClicks writing a client-facing Solutions Requirements Definition (SRD) document. You write in a professional, clear tone. You never use internal jargon. You are precise about what is and is not included in scope, and you never contradict yourself between sections.`;
+
+  const userPrompt = `Generate a TapClicks AdFlo SRD for the following engagement. Return strict JSON only — no markdown, no backticks, no explanation.
 
 CLIENT: ${clientName}
-REP / PRIMARY CONTACT: ${session.primary_contact || "TapClicks Team"}
-ESTIMATED TOTAL HOURS: ${totalHours}
+PRIMARY CONTACT: ${session.primary_contact || "Not provided"}
+TOTAL HOURS: ${totalHours}
 TIER: ${session.tier}
-BASE HOURS (always included): ${baseHours}
-HOURS BY QUESTIONNAIRE CATEGORY (triggered questions only):
+HOUR BREAKDOWN BY CATEGORY:
 ${categoryBreakdownLines}
-${blockerQuestions.length > 0 ? `\nBLOCKER QUESTIONS TRIGGERED:\n${blockerQuestions.map((q) => `  - ${q}`).join("\n")}` : ""}
-${sowQuestions.length > 0 ? `\nSOW-WORTHY ITEMS TRIGGERED:\n${sowQuestions.map((q) => `  - ${q}`).join("\n")}` : ""}
 
-QUESTIONNAIRE (all ${qs.length} questions with answers):
+QUESTIONS AND ANSWERS:
 ${qaLines}
+${blockerQuestions.length > 0 ? `\nBLOCKER ITEMS:\n${blockerQuestions.map((q) => `  - ${q}`).join("\n")}` : "\nBLOCKER ITEMS: None"}
+${sowQuestions.length > 0 ? `\nSOW ITEMS:\n${sowQuestions.map((q) => `  - ${q}`).join("\n")}` : "\nSOW ITEMS: None"}
 
-Return ONLY a valid JSON object — no markdown, no backticks, no explanation before or after. The JSON must have exactly these keys:
+RULES — follow these exactly:
+1. Hours in the in_scope hours_breakdown must sum to exactly ${totalHours}. Omit any category with 0 hours.
+2. out_of_scope must list only items that were explicitly answered "No" or were not triggered at all. NEVER list something as out of scope if it appears in the hours breakdown or customer objectives.
+3. Cross-check: before finalizing, verify that no item appears in both in_scope and out_of_scope. If there is a conflict, keep it in scope and remove it from out_of_scope.
+4. integration_strategy: if no integration questions were answered "Yes", set to null. Otherwise describe the integration approach based on the answers.
+5. customer_objectives: 4–6 business-focused objectives derived from "Yes" answers. Do not list technical implementation steps — list business outcomes the client wants to achieve.
+6. engagement_overview: 3–4 sentences. Reference the client name, tier, total hours, and the primary business problem being solved.
+7. risks_and_flags: include blockers, complexity flags, and any questions that were unanswered. If none, return an empty array.
+8. Primary contact display: if the contact is an email address only, display it as-is. Never invent a name.
 
+Return this exact JSON shape:
 {
-  "engagement_overview": "2-3 sentences. ${clientName} is implementing TapClicks AdFlo Order Management & Workflow. Mention that discovery was completed and this engagement covers initial configuration, UAT support, and go-live preparation. Reference the tier (${session.tier}) and ${totalHours}-hour scope.",
-  "customer_objectives": ["objective 1", "objective 2", "..."],
-  "system_architecture": "1-2 paragraphs describing the order model, product/line-item structure, and workflow approach — inferred from the questionnaire answers. Be specific about what was answered Yes.",
+  "engagement_overview": "string",
+  "customer_objectives": ["string"],
+  "system_architecture": "string",
   "in_scope": {
-    "narrative": "2-3 sentences summarising what TapClicks will deliver in this engagement.",
-    "hours_breakdown": {
-      "rows": [
-        { "label": "Form Configuration", "hours": <integer>, "detail": ["Product forms - X hrs", "Order forms - X hrs"] },
-        { "label": "Workflow Configuration", "hours": <integer>, "detail": ["<specific workflow items based on answers>"] },
-        { "label": "Integration Configuration", "hours": <integer>, "detail": ["<only include if integrations answered Yes>"] },
-        { "label": "Financial Configuration", "hours": <integer>, "detail": ["<only include if financial questions answered Yes>"] },
-        { "label": "QA & Testing", "hours": <integer>, "detail": ["TapClicks internal QA of configured forms and workflows"] },
-        { "label": "UAT Support", "hours": <integer>, "detail": ["UAT preparation, scripts, and support"] },
-        { "label": "Program Management", "hours": <integer>, "detail": ["Project management, communication, and coordination"] }
-      ],
-      "total": ${totalHours}
-    }
+    "narrative": "string",
+    "hours_breakdown": [{"category": "string", "hours": number, "details": "string"}],
+    "total_hours": ${totalHours}
   },
-  "out_of_scope": ["Active campaign migration", "Historical data migration", "Custom margin configuration", "Rate card configuration", "Orders reporting configuration"],
-  "integration_strategy": null,
-  "risks_and_flags": []
-}
-
-Rules:
-- hours_breakdown rows must sum exactly to ${totalHours}. Omit Integration Configuration or Financial Configuration rows if no questions in those categories were answered Yes. Include rows proportional to triggered weights: forms ~40-50%, workflow ~15-25%, integrations if applicable, QA ~10%, UAT ~10%, Program Management ~10%.
-- out_of_scope: always include the 5 standard items shown. Add additional items for any integrations or features that were answered "No" or "Not answered".
-- integration_strategy: set to null if no integration questions were answered "Yes". Otherwise describe the integration approach.
-- risks_and_flags: include any blockers, complexity items, or "Not answered" questions that could affect timeline. Empty array if none.
-- customer_objectives: infer 4-6 business objectives from what the client said Yes to. Be business-focused, not technical.
-- Write in a professional, client-facing tone. No jargon. No internal implementation details.`;
+  "out_of_scope": ["string"],
+  "integration_strategy": "string | null",
+  "risks_and_flags": ["string"]
+}`;
 
   // 5. Call Claude
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -133,7 +125,8 @@ Rules:
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 2500,
-      messages: [{ role: "user", content: prompt }],
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
     });
     rawContent = (message.content[0] as { text: string }).text.trim();
   } catch (e: unknown) {
@@ -150,6 +143,7 @@ Rules:
       .replace(/\s*```$/, "")
       .trim();
     srd = JSON.parse(cleaned);
+    console.log("[generate-srd] out_of_scope from Claude:", JSON.stringify(srd.out_of_scope, null, 2));
   } catch {
     console.error("[generate-srd] JSON parse failed. Raw:", rawContent.slice(0, 300));
     return NextResponse.json(

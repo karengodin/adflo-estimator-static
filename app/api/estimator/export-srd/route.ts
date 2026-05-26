@@ -114,7 +114,7 @@ const ALT_ROW_BG = "f5f5f5"; // light grey alternate rows
 const noBorder   = { style: BorderStyle.NONE,   size: 0, color: "FFFFFF" };
 const CELL_PAD   = { top: 80, bottom: 80, left: 120, right: 120 };
 
-type BreakdownRow = { label: string; hours: number; detail: string[] };
+type BreakdownRow = { category: string; hours: number; details: string };
 
 function hoursTable(rows: BreakdownRow[], total: number): Table {
   // Header cell: dark blue background, white bold text
@@ -172,9 +172,9 @@ function hoursTable(rows: BreakdownRow[], total: number): Table {
     const bg = i % 2 === 1 ? ALT_ROW_BG : undefined;
     tableRows.push(new TableRow({
       children: [
-        dCell(row.label,         COL_CAT, { bg }),
-        dCell(String(row.hours), COL_HRS, { bg }),
-        detCell(row.detail,      COL_DET, bg),
+        dCell(row.category,       COL_CAT, { bg }),
+        dCell(String(row.hours),  COL_HRS, { bg }),
+        detCell([row.details],    COL_DET, bg),
       ],
     }));
   });
@@ -339,8 +339,8 @@ export async function POST(req: NextRequest) {
           bodyPara(srd.in_scope?.narrative || ""),
           spacer(1),
           subHeading("Hours Breakdown"),
-          ...(srd.in_scope?.hours_breakdown?.rows
-            ? [hoursTable(srd.in_scope.hours_breakdown.rows, srd.in_scope.hours_breakdown.total ?? 0)]
+          ...(Array.isArray(srd.in_scope?.hours_breakdown)
+            ? [hoursTable(srd.in_scope.hours_breakdown, srd.in_scope.total_hours ?? 0)]
             : [bodyPara("See engagement overview for details.")]),
 
           // ── Section 8: Out of Scope ───────────────────────────────────────
