@@ -35,10 +35,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const effectiveMessages =
+      messages.length === 0
+        ? [{ role: "user", content: "Hello, I'd like to learn about implementing AdFlo." }]
+        : messages;
+
     console.log("[interview/chat] calling Claude:", {
       model: "claude-sonnet-4-6",
-      messageCount: messages.length,
-      firstMessage: messages[0] ?? null,
+      messageCount: effectiveMessages.length,
+      firstMessage: effectiveMessages[0] ?? null,
     });
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -52,7 +57,7 @@ export async function POST(req: NextRequest) {
         model: "claude-sonnet-4-6",
         max_tokens: 500,
         system,
-        messages,
+        messages: effectiveMessages,
       }),
     });
 
