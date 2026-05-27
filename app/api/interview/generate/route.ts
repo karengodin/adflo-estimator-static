@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 import * as XLSX from "xlsx";
 
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface DbQuestion {
