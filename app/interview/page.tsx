@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 interface Message {
@@ -25,6 +25,14 @@ const TIER_COLORS: Record<string, { bg: string; color: string; border: string }>
 };
 
 export default function InterviewPage() {
+  return (
+    <Suspense fallback={<div style={{ fontFamily: "'DM Sans', sans-serif", padding: 40, color: "#627286" }}>Loading...</div>}>
+      <InterviewContent />
+    </Suspense>
+  );
+}
+
+function InterviewContent() {
   const searchParams = useSearchParams();
   const sessionIdParam = searchParams.get("session_id");
 
