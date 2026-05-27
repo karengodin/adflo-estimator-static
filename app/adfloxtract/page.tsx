@@ -369,7 +369,7 @@ export default function AdfloXtractPage() {
       <div style={{ padding: '16px 24px', borderBottom: '1px solid #dde5ef', flexShrink: 0 }}>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#0f1623' }}>adfloXtract</h1>
         <p style={{ margin: '3px 0 0', fontSize: 13, color: '#627286' }}>
-          Extract configuration data from TapClicks instances
+          Extract configuration data from your instances
         </p>
       </div>
 

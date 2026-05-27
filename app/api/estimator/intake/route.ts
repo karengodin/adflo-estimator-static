@@ -80,7 +80,7 @@ function buildEmailHtml(p: {
             <div style="width:38px;height:38px;background:linear-gradient(135deg,#2f6fed,#4fbf9f);border-radius:10px;text-align:center;line-height:38px;font-weight:800;color:#fff;font-size:15px;">af</div>
           </td>
           <td style="vertical-align:middle;">
-            <span style="font-size:15px;font-weight:700;color:#fff;letter-spacing:-0.02em;">AdFlo by TapClicks</span>
+            <span style="font-size:15px;font-weight:700;color:#fff;letter-spacing:-0.02em;">AdFlo</span>
           </td>
         </tr></table>
         <div style="margin-top:18px;font-size:22px;font-weight:800;color:#fff;letter-spacing:-0.02em;">Assessment Received</div>
@@ -92,7 +92,7 @@ function buildEmailHtml(p: {
 
         <p style="margin:0 0 24px;font-size:15px;color:#455468;line-height:1.75;">
           Hi ${p.contactName},<br><br>
-          Thank you for completing your AdFlo Implementation Assessment. We&rsquo;ve received your submission and your TapClicks implementation team will review your answers and be in touch within <strong style="color:#0f1623;">2 business days</strong>.
+          Thank you for completing your AdFlo Implementation Assessment. We&rsquo;ve received your submission and your AdFlo implementation team will review your answers and be in touch within <strong style="color:#0f1623;">2 business days</strong>.
         </p>
 
         <!-- Estimate -->
@@ -135,7 +135,7 @@ function buildEmailHtml(p: {
         </table>
 
         <p style="margin:0;font-size:13.5px;color:#8a9bb0;line-height:1.7;">
-          If you have any questions in the meantime, please reach out to your TapClicks representative directly.
+          If you have any questions in the meantime, please reach out to your AdFlo representative directly.
         </p>
 
       </td></tr>
@@ -144,7 +144,7 @@ function buildEmailHtml(p: {
       <tr><td style="background:#f8fafc;border-top:1px solid #e8edf5;border-radius:0 0 14px 14px;padding:18px 32px;">
         <table width="100%" cellpadding="0" cellspacing="0"><tr>
           <td>
-            <div style="font-size:13px;font-weight:700;color:#0f1623;">TapClicks</div>
+            <div style="font-size:13px;font-weight:700;color:#0f1623;">AdFlo</div>
             <div style="font-size:12px;color:#8a9bb0;margin-top:2px;">AdFlo Implementation Team</div>
           </td>
           <td align="right">
@@ -263,7 +263,7 @@ export async function POST(request: Request) {
 
         const resend = new Resend(resendKey);
         await resend.emails.send({
-          from:    "AdFlo by TapClicks <onboarding@tapclicks.com>",
+          from:    "AdFlo <onboarding@tapclicks.com>",
           to:      contact_email.trim(),
           subject: `Your AdFlo Implementation Assessment — ${company_name.trim()}`,
           html: buildEmailHtml({

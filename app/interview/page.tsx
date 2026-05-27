@@ -183,7 +183,7 @@ function InterviewContent() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${result.clientName || "AdFlo"}_Implementation_Discovery.xlsx`;
+    a.download = `${(result.clientName || "AdFlo").replace(/\s+/g, "_")}_AdFlo_Workbook_${new Date().toISOString().split("T")[0]}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   };

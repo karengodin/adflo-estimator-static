@@ -71,9 +71,9 @@ export async function POST(req: NextRequest) {
   const clientName: string = session.client_name || "Client";
 
   // 4. Build prompts
-  const systemPrompt = `You are a senior implementation consultant at TapClicks writing a client-facing Solutions Requirements Definition (SRD) document. You write in a professional, clear tone. You never use internal jargon. You are precise about what is and is not included in scope, and you never contradict yourself between sections.`;
+  const systemPrompt = `You are a senior implementation consultant at AdFlo writing a client-facing Solutions Requirements Definition (SRD) document. You write in a professional, clear tone. You never use internal jargon. You are precise about what is and is not included in scope, and you never contradict yourself between sections.`;
 
-  const userPrompt = `Generate a TapClicks AdFlo SRD for the following engagement. Return strict JSON only — no markdown, no backticks, no explanation.
+  const userPrompt = `Generate an AdFlo SRD for the following engagement. Return strict JSON only — no markdown, no backticks, no explanation.
 
 CLIENT: ${clientName}
 PRIMARY CONTACT: ${session.primary_contact || "Not provided"}

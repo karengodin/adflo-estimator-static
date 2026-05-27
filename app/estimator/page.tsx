@@ -45,6 +45,7 @@ type Session = {
   submitted_at: string;
   updated_at: string | null;
   notes: string | null;
+  transcript?: Array<{ role: string; content: string }> | null;
 };
 
 type Logic = {
@@ -273,7 +274,7 @@ function generateTemplateSRD(
   est: EstResult,
 ): SrdData {
   const clientName = session.company_name || "Client";
-  const repName    = session.primary_contact || "TapClicks Team";
+  const repName    = session.primary_contact || "AdFlo Team";
   const answers    = session.answers || {};
 
   const bySort = (n: number) => questions.find((q) => q.display_order === n);
@@ -452,7 +453,7 @@ function generateTemplateSRD(
   }
 
   return {
-    engagement_overview: `${clientName} is implementing TapClicks AdFlo Order Management & Workflow. This engagement covers initial configuration, UAT support, and go-live preparation based on discovery completed with ${repName}.`,
+    engagement_overview: `${clientName} is implementing AdFlo Order Management & Workflow. This engagement covers initial configuration, UAT support, and go-live preparation based on discovery completed with ${repName}.`,
     customer_objectives: objectives.length > 0 ? objectives : ["Configuration and workflow setup per discovery sessions"],
     system_architecture: arch,
     in_scope: {
@@ -546,6 +547,9 @@ export default function EstimatorPage() {
   const [srdExporting, setSrdExporting] = useState(false);
   const [srdError, setSrdError] = useState<string | null>(null);
 
+  // Transcript viewer
+  const [transcriptSession, setTranscriptSession] = useState<Session | null>(null);
+
   // Share link
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareLink, setShareLink] = useState<string | null>(null);
@@ -602,8 +606,8 @@ export default function EstimatorPage() {
   const srdIsStale = useMemo(() => {
     if (!srdData) return false;
     const srdClient = srdData.meta.clientName || "Client";
-    const srdRep    = srdData.meta.repName    || "TapClicks Team";
-    return (companyName || "Client") !== srdClient || (contactName || "TapClicks Team") !== srdRep;
+    const srdRep    = srdData.meta.repName    || "AdFlo Team";
+    return (companyName || "Client") !== srdClient || (contactName || "AdFlo Team") !== srdRep;
   }, [srdData, companyName, contactName]);
 
   // ── Auto-save ──
@@ -1267,7 +1271,14 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
                           </td>
                           <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7", color: "#8a9bb0" }}>{s.primary_contact || "—"}</td>
                           <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7", color: "#8a9bb0", fontSize: 12 }}>{new Date(s.updated_at || s.submitted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
-                          <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7" }} onClick={(e) => e.stopPropagation()}><button onClick={() => openSession(s.id)} style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px" }}>Open →</button></td>
+                          <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7" }} onClick={(e) => e.stopPropagation()}>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button onClick={() => openSession(s.id)} style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px" }}>Open →</button>
+                              {Array.isArray(s.transcript) && s.transcript.length > 0 && (
+                                <button onClick={() => setTranscriptSession(s)} style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px", color: "#2f6fed", borderColor: "#cddcff" }}>Transcript</button>
+                              )}
+                            </div>
+                          </td>
                         </tr>
                       );
                     })}
@@ -1648,6 +1659,36 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
   </button>
 </div>
           </div>
+        )}
+
+        {/* Transcript viewer modal */}
+        {transcriptSession && (
+          <ModalOverlay onClose={() => setTranscriptSession(null)}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#0f1623", marginBottom: 4 }}>Interview Transcript</div>
+            <div style={{ fontSize: 13, color: "#627286", marginBottom: 16 }}>{transcriptSession.company_name || "Session"}</div>
+            <div style={{ maxHeight: 480, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, padding: "4px 0" }}>
+              {(transcriptSession.transcript ?? []).map((msg, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                  <div style={{
+                    maxWidth: "80%",
+                    background: msg.role === "user" ? "#2f6fed" : "#f8fafc",
+                    color: msg.role === "user" ? "#fff" : "#1a2332",
+                    borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                    padding: "10px 14px",
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    border: msg.role === "assistant" ? "1px solid #e8edf5" : "none",
+                    whiteSpace: "pre-wrap",
+                  }}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={() => setTranscriptSession(null)} style={outlineBtnStyle}>Close</button>
+            </div>
+          </ModalOverlay>
         )}
 
         {/* New session modal */}

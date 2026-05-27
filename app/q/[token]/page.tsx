@@ -170,8 +170,8 @@ export default function PublicQuestionnairePage() {
           </h2>
           <p style={{ fontSize: 14, color: "#627286", lineHeight: 1.75, margin: "0 0 20px" }}>
             {error.includes("expired")
-              ? "This link has expired. Please contact your TapClicks representative for a new link."
-              : "This link is invalid or no longer active. Please contact your TapClicks representative."}
+              ? "This link has expired. Please contact your AdFlo representative for a new link."
+              : "This link is invalid or no longer active. Please contact your AdFlo representative."}
           </p>
           <div style={{ fontSize: 13, color: "#8a9bb0" }}>
             Questions? Email{" "}
@@ -200,7 +200,7 @@ export default function PublicQuestionnairePage() {
             Your answers have been submitted{data?.companyName ? ` for ${data.companyName}` : ""}.
           </p>
           <p style={{ fontSize: 14, color: "#8a9bb0", lineHeight: 1.75, margin: 0 }}>
-            Your TapClicks implementation team will review your responses and be in touch shortly with next steps.
+            Your AdFlo implementation team will review your responses and be in touch shortly with next steps.
           </p>
         </div>
       </div>

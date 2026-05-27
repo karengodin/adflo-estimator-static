@@ -14,6 +14,7 @@ type DbSession = {
   tier: string;
   notes: string | null;
   intake_notes: Record<string, string> | null;
+  transcript?: unknown;
 };
 
 function toUi(row: DbSession) {
@@ -31,10 +32,11 @@ function toUi(row: DbSession) {
     updated_at:       row.updated_at ?? null,
     notes:            row.notes ?? null,
     intake_notes:     row.intake_notes ?? null,
+    transcript:       (row.transcript as Array<{ role: string; content: string }> | null) ?? null,
   };
 }
 
-const SELECT = "id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes, intake_notes";
+const SELECT = "id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes, intake_notes, transcript";
 
 // GET — fetch a single session by id
 export async function GET(

@@ -187,7 +187,7 @@ export default function InstancesPage() {
           Instances
         </h1>
         <p style={{ margin: "6px 0 0", fontSize: 14, color: "#627286" }}>
-          Add TapClicks instances by pasting a session cookie from browser DevTools.
+          Add instances by pasting a session cookie from browser DevTools.
         </p>
       </div>
 

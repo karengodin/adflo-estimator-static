@@ -121,10 +121,10 @@ export default function IntakePage() {
             Thank you, {companyName}!
           </h1>
           <p style={{ margin: "0 0 10px", fontSize: 16, color: "#455468", lineHeight: 1.7 }}>
-            Your assessment has been submitted. Your TapClicks implementation team will review your answers and be in touch within 2 business days.
+            Your assessment has been submitted. Your AdFlo implementation team will review your answers and be in touch within 2 business days.
           </p>
           <p style={{ margin: "0 0 24px", fontSize: 14, color: "#8a9bb0", lineHeight: 1.6 }}>
-            In the meantime, if you have any questions please contact your TapClicks representative.
+            In the meantime, if you have any questions please contact your AdFlo representative.
           </p>
           {shareUrl && (
             <div style={{ background: "#f8fafc", border: "1px solid #dde5ef", borderRadius: 12, padding: "14px 18px", textAlign: "left", marginBottom: 8 }}>
@@ -138,7 +138,7 @@ export default function IntakePage() {
             <div style={{ width: 28, height: 28, borderRadius: 8, background: "#2f6fed", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <span style={{ color: "#fff", fontWeight: 800, fontSize: 12 }}>A</span>
             </div>
-            <span style={{ fontSize: 13, color: "#8a9bb0", fontWeight: 600 }}>AdFlo by TapClicks</span>
+            <span style={{ fontSize: 13, color: "#8a9bb0", fontWeight: 600 }}>AdFlo</span>
           </div>
         </div>
       </div>
@@ -157,7 +157,7 @@ export default function IntakePage() {
               <span style={{ color: "#fff", fontWeight: 800, fontSize: 14 }}>A</span>
             </div>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#0f1623", lineHeight: 1.2 }}>AdFlo by TapClicks</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#0f1623", lineHeight: 1.2 }}>AdFlo</div>
               <div style={{ fontSize: 11, color: "#8a9bb0", marginTop: 1 }}>Implementation Assessment</div>
             </div>
           </div>
@@ -338,7 +338,7 @@ export default function IntakePage() {
 
           {canSubmit && (
             <p style={{ textAlign: "center", marginTop: 10, fontSize: 12, color: "#8a9bb0" }}>
-              Your responses will be reviewed by the TapClicks implementation team within 2 business days.
+              Your responses will be reviewed by the AdFlo implementation team within 2 business days.
             </p>
           )}
         </div>
@@ -349,7 +349,7 @@ export default function IntakePage() {
             <div style={{ width: 24, height: 24, borderRadius: 6, background: "#2f6fed", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <span style={{ color: "#fff", fontWeight: 800, fontSize: 10 }}>A</span>
             </div>
-            <span style={{ fontSize: 12, color: "#8a9bb0", fontWeight: 600 }}>AdFlo by TapClicks</span>
+            <span style={{ fontSize: 12, color: "#8a9bb0", fontWeight: 600 }}>AdFlo</span>
           </div>
           <p style={{ margin: 0, fontSize: 11, color: "#aab4c0" }}>Your information is kept confidential and used only for implementation planning.</p>
         </div>

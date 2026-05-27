@@ -162,18 +162,53 @@ function buildAnswers(
 function buildWorkbook(extracted: ExtractedData): Buffer {
   const wb = XLSX.utils.book_new();
 
+  // ── Project Schedule ──
+  const scheduleRows: unknown[][] = [
+    ["Phase Title", "Start Date", "Planned End Date", "Duration (days)", "Actual Completion Date", "Status", "AdFlo Owner", "Resources", "Risks", "Issues", "Comments"],
+    // Initiation
+    ["Initiation", "", "", "", "", "", "", "", "", "", ""],
+    ["Project Kickoff", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["SRD Review & Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Stakeholder Introductions", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Workbook Completion", "", "", "", "", "Not Started", "", "", "", "", ""],
+    // Discovery
+    ["Discovery", "", "", "", "", "", "", "", "", "", ""],
+    ["Product Form Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Order Form Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Task Form Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Workflow Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["User & Role Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Integration Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Checkpoint 1: Documentation Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
+    // UAT Configuration
+    ["UAT Configuration", "", "", "", "", "", "", "", "", "", ""],
+    ["Product & Order Form Build", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Workflow Configuration", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["User Setup & Permissions", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Integration Setup", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Checkpoint 2: UAT Start", "", "", "", "", "Not Started", "", "", "", "", ""],
+    // End-User Training
+    ["End-User Training", "", "", "", "", "", "", "", "", "", ""],
+    ["Admin Training", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["End-User Training Sessions", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Training Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
+    // UAT
+    ["UAT", "", "", "", "", "", "", "", "", "", ""],
+    ["UAT Execution", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Bug Triage & Fixes", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["UAT Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Checkpoint 3: UAT Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
+    // Launch
+    ["Launch", "", "", "", "", "", "", "", "", "", ""],
+    ["Go-Live Preparation", "", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Go-Live", extracted.goLiveDate || "TBD", "", "", "", "Not Started", "", "", "", "", ""],
+    ["Post-Launch Hypercare", "", "", "", "", "Not Started", "", "", "", "", ""],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(scheduleRows), "Project Schedule");
+
   // ── Stakeholder Register ──
   const stakeRows: unknown[][] = [
-    ["Name", "Email", "Title", "Company", "Role / Responsibilities", "Type", "Involvement Level"],
-    ...extracted.stakeholders.map((s) => [
-      s.name || "",
-      s.email || "",
-      s.title || "",
-      s.company || extracted.clientName || "",
-      s.role || "",
-      s.type || "C",
-      "Key",
-    ]),
+    ["Stakeholder (Name - suffix)", "Email", "Title", "Project Role", "Project Involvement", "Comm Freq", "Business SME", "Internal System SME", "Involved in Sale"],
   ];
   if (extracted.primaryContact?.name) {
     const alreadyListed = extracted.stakeholders.some(
@@ -181,26 +216,42 @@ function buildWorkbook(extracted: ExtractedData): Buffer {
     );
     if (!alreadyListed) {
       stakeRows.push([
-        extracted.primaryContact.name,
+        `${extracted.primaryContact.name} - C`,
         extracted.primaryContact.email || "",
         extracted.primaryContact.title || "",
-        extracted.clientName || "",
         "Primary Contact",
-        "C",
-        "Decision Maker",
+        "High",
+        "Weekly",
+        "No",
+        "No",
+        "No",
       ]);
     }
+  }
+  for (const s of extracted.stakeholders) {
+    stakeRows.push([
+      `${s.name || ""} - ${s.type || "C"}`,
+      s.email || "",
+      s.title || "",
+      s.role || "",
+      "TBD",
+      "TBD",
+      "No",
+      "No",
+      "No",
+    ]);
   }
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stakeRows), "Stakeholder Register");
 
   // ── Master Product List ──
   const productRows: unknown[][] = [
-    ["Product Name", "Channel", "Vendor / Platform", "Delivery Type"],
+    ["Product Name", "Subproducts", "Vendor/Platform", "Team", "In House/Managed Service"],
     ...extracted.products.map((p) => [
       p.name || "",
-      p.channel || "",
+      "",
       p.vendor || "",
-      p.managedService ? "Managed Service" : "In-House",
+      "",
+      p.managedService ? "Managed Service" : "In House",
     ]),
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(productRows), "Master Product List");
@@ -212,25 +263,34 @@ function buildWorkbook(extracted: ExtractedData): Buffer {
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(queueRows), "Queue Names");
 
-  // ── Gantt Chart ──
-  const today = new Date().toISOString().split("T")[0];
-  const ganttRows: unknown[][] = [
-    ["AdFlo Implementation Timeline"],
-    [],
-    ["Project Start", today],
-    ["Target Go-Live", extracted.goLiveDate || "TBD"],
-    [],
-    ["Phase", "Start Date", "End Date", "Status", "Notes"],
-    ["Discovery & Kickoff", today, "", "Planned", ""],
-    ["Form & Workflow Configuration", "", "", "Planned", ""],
-    ["Integration Setup", "", "", "Planned", extracted.integrations.join(", ") || ""],
-    ["UAT", "", "", "Planned", ""],
-    ["Go-Live", extracted.goLiveDate || "", "", "Planned", ""],
+  // ── Users ──
+  const userRows: unknown[][] = [
+    ["User", "Email", "Business Unit", "Queue", "Data Profile", "Type", "AdFlo Role", "Status"],
   ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ganttRows), "Gantt Chart");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(userRows), "Users");
+
+  // ── Governance ──
+  const governanceRows: unknown[][] = [
+    ["Meeting Cadence", "", "", ""],
+    ["Meeting Type", "Next Meeting", "Notes", ""],
+    ["Weekly Status", "", "", ""],
+    ["Working Session", "", "", ""],
+    ["Technical Call", "", "", ""],
+    ["Steering Committee", "", "", ""],
+    ["Launch Call", "", "", ""],
+    [],
+    ["Contracted Hours Tracker", "", "", ""],
+    ["Phase", "Contracted Hours", "Hours Used", "Hours Remaining"],
+    ["Discovery", "", "", ""],
+    ["Configuration", "", "", ""],
+    ["Training", "", "", ""],
+    ["Testing", "", "", ""],
+    ["Total", "", "", ""],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(governanceRows), "Governance");
 
   // ── Blank sheets ──
-  for (const name of ["Client Order Forms", "Workflows", "RAID Log", "Change Log"]) {
+  for (const name of ["Order Form", "Product Form", "Task Forms", "Order Tasks", "Product Tasks", "Workflow Steps", "RAID Log", "Change Log"]) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[]]), name);
   }
 
@@ -342,7 +402,7 @@ export async function POST(req: NextRequest) {
         messages: [
           {
             role: "user",
-            content: `Extract implementation discovery data from this conversation and return JSON matching this exact schema:\n\n${extractionSchema}\n\nFor type field in stakeholders: C=Client, T=TapClicks, CP=Client Partner, TP=TapClicks Partner.\nFor products with no vendor mentioned, use empty string.\nFor goLiveDate, use ISO date format or null.\nFor userCount, use the actual number mentioned or 0 if unknown.\n\nCONVERSATION:\n${transcript}`,
+            content: `Extract implementation discovery data from this conversation and return JSON matching this exact schema:\n\n${extractionSchema}\n\nFor type field in stakeholders: C=Client, T=AdFlo, CP=Client Partner, TP=AdFlo Partner.\nFor products with no vendor mentioned, use empty string.\nFor goLiveDate, use ISO date format or null.\nFor userCount, use the actual number mentioned or 0 if unknown.\n\nCONVERSATION:\n${transcript}`,
           },
         ],
       }),
@@ -381,6 +441,7 @@ export async function POST(req: NextRequest) {
         estimated_hours: estimatedHours,
         tier,
         status: "submitted",
+        transcript: messages,
         notes: [
           extracted.orderApprovalFlow ? `Order flow: ${extracted.orderApprovalFlow}` : "",
           extracted.workflowNotes ? `Workflows: ${extracted.workflowNotes}` : "",

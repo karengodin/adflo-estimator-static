@@ -21,19 +21,19 @@ import {
 // ─── Boilerplate texts ───────────────────────────────────────────────────────
 
 const SECTION_1_PURPOSE =
-  "The purpose of this Solutions Requirements Definition (SRD) document is to drive alignment between the Customer needs and requirements for engaging with TapClicks' products and services. The exercise aims to ensure that the Customer's expectations are set appropriately so that they can fully onboard smoothly and leverage TapClicks' offerings. This document will detail all items to be delivered in the implementation process, along with an initial project schedule. Customer's receipt and signed acknowledgement of the document will confirm scope of the TapClicks implementation project. SRD will be attached to the Master Service Agreement (MSA) as an exhibit. The project will be governed by the details, milestones and change controls outlined below.";
+  "The purpose of this Solutions Requirements Definition (SRD) document is to drive alignment between the Customer needs and requirements for engaging with AdFlo's products and services. The exercise aims to ensure that the Customer's expectations are set appropriately so that they can fully onboard smoothly and leverage AdFlo's offerings. This document will detail all items to be delivered in the implementation process, along with an initial project schedule. Customer's receipt and signed acknowledgement of the document will confirm scope of the AdFlo implementation project. SRD will be attached to the Master Service Agreement (MSA) as an exhibit. The project will be governed by the details, milestones and change controls outlined below.";
 
 const SECTION_2_DEFINITIONS =
   "AdFlo is building the first outcome-based, end-to-end advertising operating system that replaces fragmented workflows with a compounding, AI-driven platform for planning, selling, activating, and reporting across digital and linear media. AdFlo consists of 4 modules (which can each exist separately): Proposal Front-end, Media Marketplace, Order Management & Kanban Workflow Management, Reporting.";
 
 const SECTION_10_ROLES =
-  "TapClicks to support: Configuration and ad hoc support during the Implementation including UAT/Production Configuration, Client/Order/Line Item/Flight forms, TapClicks QA of Configuration, Workflow Configuration, and User Acceptance Testing support. [CLIENT] to support: Project and program management, Use Cases and Solutioning, Scope alignment and management, User Acceptance Testing approval and signoff, and end-user Training.";
+  "AdFlo to support: Configuration and ad hoc support during the Implementation including UAT/Production Configuration, Client/Order/Line Item/Flight forms, AdFlo QA of Configuration, Workflow Configuration, and User Acceptance Testing support. [CLIENT] to support: Project and program management, Use Cases and Solutioning, Scope alignment and management, User Acceptance Testing approval and signoff, and end-user Training.";
 
 const SECTION_11_DELIVERABLES =
-  "TapClicks Will Provide the following during the Implementation Project: Project Plan, Scope and Delivery Plan based on Discovery. Documentation Details for Milestone 1. Acceptance Criteria and User Acceptance Testing scripts for Milestone 2. Acceptance Criteria statements will be agreed-upon by both CUSTOMER and TapClicks. The Acceptance Criteria approves or rejects the User Acceptance Testing UAT for the Implementation. Confirmation of the Acceptance Criteria completes the implementation phase of the engagement.";
+  "AdFlo Will Provide the following during the Implementation Project: Project Plan, Scope and Delivery Plan based on Discovery. Documentation Details for Milestone 1. Acceptance Criteria and User Acceptance Testing scripts for Milestone 2. Acceptance Criteria statements will be agreed-upon by both CUSTOMER and AdFlo. The Acceptance Criteria approves or rejects the User Acceptance Testing UAT for the Implementation. Confirmation of the Acceptance Criteria completes the implementation phase of the engagement.";
 
 const SECTION_12_CADENCE =
-  "In order for the project to progress forward, each of these checkpoints should be signed-off via email. Project Checkpoint 1 (Documentation Sign-Off): Product and Order Forms, Written approval of form fields as defined in shared implementation workbook, Delivery of Project Plan, Delivery dates, Estimated live date. Project Checkpoint 2 (UAT Start): Product and Order Forms platform configuration, Written approval of all forms configured on the TapClicks platform, Updated Project Plan, Remaining Delivery Dates, Live Date, User Acceptance Testing based on UAT Scripts provided by TapClicks.";
+  "In order for the project to progress forward, each of these checkpoints should be signed-off via email. Project Checkpoint 1 (Documentation Sign-Off): Product and Order Forms, Written approval of form fields as defined in shared implementation workbook, Delivery of Project Plan, Delivery dates, Estimated live date. Project Checkpoint 2 (UAT Start): Product and Order Forms platform configuration, Written approval of all forms configured on the AdFlo platform, Updated Project Plan, Remaining Delivery Dates, Live Date, User Acceptance Testing based on UAT Scripts provided by AdFlo.";
 
 const SECTION_13_CHANGES =
   "Additional requirements that are uncovered during discovery will be managed using a change control process. These details will be documented in a separate Solutions Requirements Definition (SRD) or amendment to this document and will be estimated separately. Any material change to the scope, level of effort or schedule outlined below will require an amendment to this SRD and the CUSTOMER's signed acknowledgement of said amendment.";
@@ -229,7 +229,7 @@ function signatureTable(clientName: string): Table {
     columnWidths: [COL_SIG, COL_SIG],
     width: { size: COL_SIG * 2, type: WidthType.DXA },
     rows: [
-      new TableRow({ children: [labelCell(`${clientName} — Authorized Signature`), labelCell("TapClicks — Authorized Signature")] }),
+      new TableRow({ children: [labelCell(`${clientName} — Authorized Signature`), labelCell("AdFlo — Authorized Signature")] }),
       new TableRow({ children: [lineCell(), lineCell()] }),
       new TableRow({ children: [labelCell("Print Name"), labelCell("Print Name")] }),
       new TableRow({ children: [lineCell(), lineCell()] }),
@@ -247,7 +247,7 @@ export async function POST(req: NextRequest) {
   const srd = await req.json();
 
   const clientName: string = srd.meta?.clientName || "Client";
-  const repName: string = srd.meta?.repName || "TapClicks";
+  const repName: string = srd.meta?.repName || "AdFlo Team";
   const tier: string = srd.meta?.tier || "";
   const totalHours: number = srd.meta?.estimatedHours ?? 0;
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
@@ -255,7 +255,7 @@ export async function POST(req: NextRequest) {
   // Replace [CLIENT] placeholder in boilerplates
   const replace = (text: string) => text.replace(/\[CLIENT\]/g, clientName);
 
-  const methodologyText = `TapClicks provided demos of AdFlo and did a business process discovery focusing on ${clientName}'s Orders and Workflow processes and advertising-related systems. There was an emphasis on pre-sales, planning, order management and workflows. TapClicks then reviewed and highlighted where TapClicks technology can fit into ${clientName}'s ecosystem. TapClicks offered technical solutions to the problems that were uncovered during the various pre-sales meetings and discovery sessions. Said solutions are outlined below in more detail. The scope of the solution and project is subject to change based on new learnings that may be uncovered during the post-sale project discovery once the engagement begins or in other future sessions. Said scope changes will be handled via the Change Request process detailed in Section 13.`;
+  const methodologyText = `AdFlo provided demos and did a business process discovery focusing on ${clientName}'s Orders and Workflow processes and advertising-related systems. There was an emphasis on pre-sales, planning, order management and workflows. AdFlo then reviewed and highlighted where AdFlo technology can fit into ${clientName}'s ecosystem. AdFlo offered technical solutions to the problems that were uncovered during the various pre-sales meetings and discovery sessions. Said solutions are outlined below in more detail. The scope of the solution and project is subject to change based on new learnings that may be uncovered during the post-sale project discovery once the engagement begins or in other future sessions. Said scope changes will be handled via the Change Request process detailed in Section 13.`;
 
   const doc = new Document({
     creator: "AdFlo Estimator",
@@ -286,7 +286,7 @@ export async function POST(req: NextRequest) {
               new Paragraph({
                 alignment: AlignmentType.CENTER,
                 children: [
-                  new TextRun({ children: [`TapClicks Confidential  |  ${clientName} SRD  |  Page `, PageNumber.CURRENT], size: SMALL_SIZE, color: GRAY_TEXT, font: FONT }),
+                  new TextRun({ children: [`AdFlo Confidential  |  ${clientName} SRD  |  Page `, PageNumber.CURRENT], size: SMALL_SIZE, color: GRAY_TEXT, font: FONT }),
                 ],
               }),
             ],
@@ -306,7 +306,7 @@ export async function POST(req: NextRequest) {
           spacer(8),
           centeredPara("CONFIDENTIAL", { bold: true, size: 18, color: GRAY_TEXT }),
           centeredPara("This document contains proprietary and confidential information.", { size: 18, color: GRAY_TEXT }),
-          centeredPara("© TapClicks, Inc. All rights reserved.", { size: 18, color: GRAY_TEXT }),
+          centeredPara("© AdFlo, Inc. All rights reserved.", { size: 18, color: GRAY_TEXT }),
 
           // ── Section 1: Purpose ────────────────────────────────────────────
           sectionHeading(1, "Purpose"),
@@ -393,7 +393,7 @@ export async function POST(req: NextRequest) {
             border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: ACCENT_BLUE, space: 4 } },
           }),
           bodyPara(
-            `By signing below, both parties agree to the scope, timeline, and terms outlined in this Solutions Requirements Definition. This document becomes an exhibit to the Master Service Agreement between ${clientName} and TapClicks, Inc.`
+            `By signing below, both parties agree to the scope, timeline, and terms outlined in this Solutions Requirements Definition. This document becomes an exhibit to the Master Service Agreement between ${clientName} and AdFlo, Inc.`
           ),
           spacer(2),
           signatureTable(clientName),
@@ -404,12 +404,13 @@ export async function POST(req: NextRequest) {
 
   const buffer = await Packer.toBuffer(doc);
 
-  const safeName = clientName.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-");
+  const safeName = clientName.replace(/[^a-zA-Z0-9]/g, " ").trim().replace(/\s+/g, "_");
+  const date = new Date().toISOString().slice(0, 10);
   return new NextResponse(new Uint8Array(buffer), {
     status: 200,
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "Content-Disposition": `attachment; filename="SRD-${safeName}-${new Date().toISOString().slice(0, 10)}.docx"`,
+      "Content-Disposition": `attachment; filename="${safeName}_AdFlo_SRD_${date}.docx"`,
     },
   });
 }
