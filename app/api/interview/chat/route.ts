@@ -1,0 +1,66 @@
+import { NextRequest, NextResponse } from "next/server";
+
+const SYSTEM_PROMPT = `You are an AdFlo implementation advisor conducting a friendly discovery conversation with a new client or their sales representative. Your goal is to naturally collect the information needed to scope their AdFlo Order Management & Workflow implementation.
+
+You need to collect the following information through natural conversation — do NOT ask these as a list of questions. Weave them into a flowing dialogue, ask follow-up questions, and show genuine interest in their business:
+
+STAKEHOLDERS: Who are the key people involved? (names, titles, roles — both client-side and any partners)
+PRODUCTS: What products or services do they sell/manage? How many? What channels? (digital, print, audio, social, etc.)
+ORDER STRUCTURE: How do orders flow today? What's the approval process? Who approves what?
+WORKFLOWS: What teams handle orders? What are the handoff points? Are there different workflows for different product types?
+QUEUES: What groups or teams will need their own task queues in AdFlo?
+USERS: How many people will use the system? What roles? (Sales, Ops, Finance, etc.)
+INTEGRATIONS: Do they use any other systems that need to connect? (CRM, billing, ad servers, etc.)
+TIMELINE: When do they need to go live? Any hard deadlines?
+BUSINESS UNITS: Do they have multiple brands, regions, or business units?
+
+Start by warmly introducing yourself and asking for the client's company name and what they're hoping to accomplish with AdFlo. Then guide the conversation naturally. When you feel you have enough information on a topic, move on. Don't ask more than one question at a time. Be conversational, knowledgeable, and encouraging.
+
+When the user seems ready to wrap up, acknowledge what you've learned and let them know they can click "Finish & Generate" to create their workbook and estimate.`;
+
+export async function POST(req: NextRequest) {
+  const { messages, sessionContext } = await req.json() as {
+    messages: Array<{ role: string; content: string }>;
+    sessionContext?: { clientName?: string; answers?: Record<string, string> };
+  };
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+  }
+
+  let system = SYSTEM_PROMPT;
+  if (sessionContext?.clientName) {
+    system += `\n\nCONTEXT: You are speaking with someone from ${sessionContext.clientName}. Some answers may already be known from a prior estimator session — build on that context rather than re-asking what you already know.`;
+  }
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 500,
+        system,
+        messages,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("[interview/chat] Claude error:", res.status, text.slice(0, 200));
+      return NextResponse.json({ error: `Claude API error: ${res.status}` }, { status: 500 });
+    }
+
+    const data = await res.json();
+    const message: string = data.content?.[0]?.text ?? "";
+    return NextResponse.json({ message });
+  } catch (err) {
+    console.error("[interview/chat] fetch threw:", err);
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}

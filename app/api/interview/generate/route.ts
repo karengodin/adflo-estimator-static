@@ -1,0 +1,443 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseServer } from "../../../../lib/supabaseServer";
+import * as XLSX from "xlsx";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface DbQuestion {
+  id: number;
+  sort_order: number;
+  q: string;
+  question_type: string | null;
+  weight: number;
+  is_risk_multiplier: boolean | null;
+  risk_multiplier_value: number | null;
+}
+
+interface LogicSettings {
+  base_hours: number;
+  best_case_multiplier: number;
+  worst_case_multiplier: number;
+  product_hour_rate: number;
+  connector_hour_rate: number;
+  tiers: Array<{ name: string; min_hours: number; timeline: string }>;
+  risk_multipliers?: Array<{ sort_order: number; condition: string; multiplier: number }>;
+}
+
+interface ExtractedData {
+  clientName: string;
+  primaryContact: { name: string; email: string; title: string };
+  stakeholders: Array<{ name: string; email: string; title: string; company: string; role: string; type: string }>;
+  products: Array<{ name: string; channel: string; vendor: string; managedService: boolean }>;
+  queues: Array<{ name: string; notes: string }>;
+  users: { count: number; roles: string[] };
+  integrations: string[];
+  goLiveDate: string | null;
+  businessUnits: string[];
+  orderApprovalFlow: string;
+  workflowNotes: string;
+  estimateAnswers: {
+    productFormCount: number;
+    hasWorkflows: boolean;
+    hasIntegrations: boolean;
+    hasFinancialTracking: boolean;
+    hasMultipleBusinessUnits: boolean;
+    userCount: number;
+    hasFlightForms: boolean;
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function getTier(hours: number, tiers: LogicSettings["tiers"]): string {
+  const sorted = [...tiers].sort((a, b) => b.min_hours - a.min_hours);
+  return sorted.find((t) => hours >= t.min_hours)?.name ?? "Bronze";
+}
+
+function computeHours(
+  questions: DbQuestion[],
+  answers: Record<string, string>,
+  logic: LogicSettings
+): number {
+  const bySort = (n: number) => questions.find((q) => q.sort_order === n);
+
+  // Base: yesno non-risk questions answered "Yes"
+  let base = 0;
+  for (const q of questions) {
+    if (q.question_type === "yesno" && !q.is_risk_multiplier && answers[String(q.id)] === "Yes") {
+      base += q.weight;
+    }
+  }
+
+  // Product hours: Q13 tiered, × 1.5 if Q14 = "Yes"
+  const q13 = bySort(13);
+  let products = 0;
+  if (q13) {
+    const count = parseInt(answers[String(q13.id)] || "0", 10) || 0;
+    if (count > 0) {
+      const rate = logic.product_hour_rate ?? 4;
+      let p: number;
+      if (count <= 3) p = count * rate;
+      else if (count <= 8) p = count * (rate * 0.75);
+      else p = count * (rate * 0.5);
+      const q14 = bySort(14);
+      if (q14 && answers[String(q14.id)] === "Yes") p *= 1.5;
+      products = Math.round(p);
+    }
+  }
+
+  // Connectors: Q12 × connectorHourRate
+  const q12 = bySort(12);
+  let connectors = 0;
+  if (q12) {
+    const count = parseInt(answers[String(q12.id)] || "0", 10) || 0;
+    connectors = count * (logic.connector_hour_rate ?? 12);
+  }
+
+  const subtotal = base + products + connectors;
+
+  // Risk multipliers: from questions with is_risk_multiplier = true
+  const hasIntegrations = questions
+    .filter((q) => q.sort_order >= 7 && q.sort_order <= 12)
+    .some((q) => {
+      const a = answers[String(q.id)];
+      return q.question_type === "number" ? parseInt(a || "0", 10) > 0 : a === "Yes";
+    });
+
+  let multiplier = 1.0;
+  for (const q of questions.filter((q) => q.is_risk_multiplier)) {
+    const answer = answers[String(q.id)];
+    if (answer !== "No") continue; // no_adds_risk: "No" answer triggers the multiplier
+    if (q.sort_order === 26 && !hasIntegrations) continue;
+    multiplier *= q.risk_multiplier_value ?? 1.0;
+  }
+
+  return Math.round(subtotal * multiplier);
+}
+
+function buildAnswers(
+  ea: ExtractedData["estimateAnswers"],
+  questions: DbQuestion[]
+): Record<string, string> {
+  const answers: Record<string, string> = {};
+  const bySort = (n: number) => questions.find((q) => q.sort_order === n);
+
+  const set = (sort: number, val: string) => {
+    const q = bySort(sort);
+    if (q) answers[String(q.id)] = val;
+  };
+
+  // Configuration
+  set(13, String(ea.productFormCount || 0));
+  set(14, ea.hasFlightForms ? "Yes" : "No");
+
+  // Workflow & Approvals
+  set(3, ea.hasWorkflows ? "Yes" : "No");
+  set(4, ea.hasWorkflows ? "Yes" : "No");
+
+  // Integrations
+  set(7, ea.hasIntegrations ? "Yes" : "No");
+
+  // Financial
+  set(19, ea.hasFinancialTracking ? "Yes" : "No");
+
+  // Multiple BUs
+  set(17, ea.hasMultipleBusinessUnits ? "Yes" : "No");
+
+  // Users
+  set(28, ea.userCount > 20 ? "Yes" : "No");
+
+  // Org readiness — default "Yes" (no risk penalty) for interview-based sessions
+  set(23, "Yes");
+  set(24, "Yes");
+  set(25, "Yes");
+  set(26, "Yes");
+
+  return answers;
+}
+
+function buildWorkbook(extracted: ExtractedData): Buffer {
+  const wb = XLSX.utils.book_new();
+
+  // ── Stakeholder Register ──
+  const stakeRows: unknown[][] = [
+    ["Name", "Email", "Title", "Company", "Role / Responsibilities", "Type", "Involvement Level"],
+    ...extracted.stakeholders.map((s) => [
+      s.name || "",
+      s.email || "",
+      s.title || "",
+      s.company || extracted.clientName || "",
+      s.role || "",
+      s.type || "C",
+      "Key",
+    ]),
+  ];
+  if (extracted.primaryContact?.name) {
+    const alreadyListed = extracted.stakeholders.some(
+      (s) => s.name === extracted.primaryContact.name
+    );
+    if (!alreadyListed) {
+      stakeRows.push([
+        extracted.primaryContact.name,
+        extracted.primaryContact.email || "",
+        extracted.primaryContact.title || "",
+        extracted.clientName || "",
+        "Primary Contact",
+        "C",
+        "Decision Maker",
+      ]);
+    }
+  }
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stakeRows), "Stakeholder Register");
+
+  // ── Master Product List ──
+  const productRows: unknown[][] = [
+    ["Product Name", "Channel", "Vendor / Platform", "Delivery Type"],
+    ...extracted.products.map((p) => [
+      p.name || "",
+      p.channel || "",
+      p.vendor || "",
+      p.managedService ? "Managed Service" : "In-House",
+    ]),
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(productRows), "Master Product List");
+
+  // ── Queue Names ──
+  const queueRows: unknown[][] = [
+    ["Queue Name", "Description / Notes"],
+    ...extracted.queues.map((q) => [q.name || "", q.notes || ""]),
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(queueRows), "Queue Names");
+
+  // ── Gantt Chart ──
+  const today = new Date().toISOString().split("T")[0];
+  const ganttRows: unknown[][] = [
+    ["AdFlo Implementation Timeline"],
+    [],
+    ["Project Start", today],
+    ["Target Go-Live", extracted.goLiveDate || "TBD"],
+    [],
+    ["Phase", "Start Date", "End Date", "Status", "Notes"],
+    ["Discovery & Kickoff", today, "", "Planned", ""],
+    ["Form & Workflow Configuration", "", "", "Planned", ""],
+    ["Integration Setup", "", "", "Planned", extracted.integrations.join(", ") || ""],
+    ["UAT", "", "", "Planned", ""],
+    ["Go-Live", extracted.goLiveDate || "", "", "Planned", ""],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ganttRows), "Gantt Chart");
+
+  // ── Blank sheets ──
+  for (const name of ["Client Order Forms", "Workflows", "RAID Log", "Change Log"]) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[]]), name);
+  }
+
+  return Buffer.from(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+}
+
+// ── Route handler ─────────────────────────────────────────────────────────────
+
+export async function POST(req: NextRequest) {
+  const { messages, sessionId: existingSessionId } = await req.json() as {
+    messages: Array<{ role: string; content: string }>;
+    sessionId?: string;
+  };
+
+  if (!messages?.length) {
+    return NextResponse.json({ error: "messages required" }, { status: 400 });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+  }
+
+  // ── Step 1: Fetch questions + logic from DB ──────────────────────────────
+  const [questionsResult, logicResult] = await Promise.all([
+    supabaseServer
+      .from("questions")
+      .select("id, sort_order, q, question_type, weight, is_risk_multiplier, risk_multiplier_value")
+      .eq("active", true)
+      .order("sort_order"),
+    supabaseServer
+      .from("logic_settings")
+      .select("base_hours, best_case_multiplier, worst_case_multiplier, product_hour_rate, connector_hour_rate, tiers, risk_multipliers")
+      .eq("id", "global")
+      .single(),
+  ]);
+
+  const questions: DbQuestion[] = (questionsResult.data ?? []) as DbQuestion[];
+  const logic: LogicSettings = logicResult.data
+    ? {
+        base_hours: (logicResult.data as Record<string, unknown>).base_hours as number ?? 0,
+        best_case_multiplier: (logicResult.data as Record<string, unknown>).best_case_multiplier as number ?? 0.8,
+        worst_case_multiplier: (logicResult.data as Record<string, unknown>).worst_case_multiplier as number ?? 1.3,
+        product_hour_rate: (logicResult.data as Record<string, unknown>).product_hour_rate as number ?? 4,
+        connector_hour_rate: (logicResult.data as Record<string, unknown>).connector_hour_rate as number ?? 12,
+        tiers: ((logicResult.data as Record<string, unknown>).tiers as LogicSettings["tiers"]) ?? [
+          { name: "Bronze", min_hours: 0, timeline: "3–5 weeks" },
+          { name: "Silver", min_hours: 61, timeline: "5–8 weeks" },
+          { name: "Gold", min_hours: 121, timeline: "8–12 weeks" },
+          { name: "Enterprise", min_hours: 201, timeline: "12–16 weeks" },
+        ],
+      }
+    : {
+        base_hours: 0,
+        best_case_multiplier: 0.8,
+        worst_case_multiplier: 1.3,
+        product_hour_rate: 4,
+        connector_hour_rate: 12,
+        tiers: [
+          { name: "Bronze", min_hours: 0, timeline: "3–5 weeks" },
+          { name: "Silver", min_hours: 61, timeline: "5–8 weeks" },
+          { name: "Gold", min_hours: 121, timeline: "8–12 weeks" },
+          { name: "Enterprise", min_hours: 201, timeline: "12–16 weeks" },
+        ],
+      };
+
+  // ── Step 2: Extract structured data from conversation ────────────────────
+  const transcript = messages
+    .map((m) => `${m.role === "user" ? "Client" : "Advisor"}: ${m.content}`)
+    .join("\n\n");
+
+  const extractionSchema = `{
+  "clientName": "string",
+  "primaryContact": { "name": "string", "email": "string", "title": "string" },
+  "stakeholders": [{ "name": "string", "email": "string", "title": "string", "company": "string", "role": "string", "type": "C|T|CP|TP" }],
+  "products": [{ "name": "string", "channel": "string", "vendor": "string", "managedService": false }],
+  "queues": [{ "name": "string", "notes": "string" }],
+  "users": { "count": 0, "roles": ["string"] },
+  "integrations": ["string"],
+  "goLiveDate": "YYYY-MM-DD or null",
+  "businessUnits": ["string"],
+  "orderApprovalFlow": "string",
+  "workflowNotes": "string",
+  "estimateAnswers": {
+    "productFormCount": 0,
+    "hasWorkflows": false,
+    "hasIntegrations": false,
+    "hasFinancialTracking": false,
+    "hasMultipleBusinessUnits": false,
+    "userCount": 0,
+    "hasFlightForms": false
+  }
+}`;
+
+  let extracted: ExtractedData;
+  try {
+    const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        system:
+          "You are extracting structured implementation discovery data from a conversation transcript. Return strict JSON only — no markdown, no backticks, no explanation.",
+        messages: [
+          {
+            role: "user",
+            content: `Extract implementation discovery data from this conversation and return JSON matching this exact schema:\n\n${extractionSchema}\n\nFor type field in stakeholders: C=Client, T=TapClicks, CP=Client Partner, TP=TapClicks Partner.\nFor products with no vendor mentioned, use empty string.\nFor goLiveDate, use ISO date format or null.\nFor userCount, use the actual number mentioned or 0 if unknown.\n\nCONVERSATION:\n${transcript}`,
+          },
+        ],
+      }),
+    });
+
+    if (!extractRes.ok) {
+      throw new Error(`Claude extraction error: ${extractRes.status}`);
+    }
+
+    const extractData = await extractRes.json();
+    let raw: string = extractData.content?.[0]?.text ?? "{}";
+    raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    extracted = JSON.parse(raw) as ExtractedData;
+  } catch (err) {
+    console.error("[interview/generate] extraction failed:", err);
+    return NextResponse.json({ error: "Failed to extract data from conversation" }, { status: 500 });
+  }
+
+  // ── Step 3: Map answers + compute hours ─────────────────────────────────
+  const answers = buildAnswers(extracted.estimateAnswers, questions);
+  const estimatedHours = computeHours(questions, answers, logic);
+  const tier = getTier(estimatedHours, logic.tiers);
+
+  // ── Step 4: Save session ─────────────────────────────────────────────────
+  let sessionId = existingSessionId ?? "";
+  try {
+    const { data: sessionData, error: sessionError } = await supabaseServer
+      .from("sessions")
+      .insert({
+        client_name: extracted.clientName || "Unknown Client",
+        primary_contact: extracted.primaryContact?.name
+          ? `${extracted.primaryContact.name}${extracted.primaryContact.email ? ` <${extracted.primaryContact.email}>` : ""}`
+          : null,
+        answers,
+        activated_levers: [],
+        estimated_hours: estimatedHours,
+        tier,
+        status: "submitted",
+        notes: [
+          extracted.orderApprovalFlow ? `Order flow: ${extracted.orderApprovalFlow}` : "",
+          extracted.workflowNotes ? `Workflows: ${extracted.workflowNotes}` : "",
+          extracted.integrations.length ? `Integrations: ${extracted.integrations.join(", ")}` : "",
+          extracted.businessUnits.length ? `Business units: ${extracted.businessUnits.join(", ")}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n") || null,
+      })
+      .select("id, share_token")
+      .single();
+
+    if (sessionError || !sessionData) {
+      console.error("[interview/generate] session insert error:", sessionError?.message);
+    } else {
+      sessionId = (sessionData as { id: string; share_token: string | null }).id;
+    }
+  } catch (err) {
+    console.error("[interview/generate] session insert threw:", err);
+  }
+
+  // ── Step 5: Generate workbook ────────────────────────────────────────────
+  let workbookBase64 = "";
+  let workbookUrl: string | null = null;
+
+  try {
+    const buffer = buildWorkbook(extracted);
+    workbookBase64 = buffer.toString("base64");
+
+    if (sessionId) {
+      // Ensure bucket exists
+      await supabaseServer.storage.createBucket("workbooks", { public: false }).catch(() => {});
+
+      const { error: uploadError } = await supabaseServer.storage
+        .from("workbooks")
+        .upload(`${sessionId}/workbook.xlsx`, buffer, {
+          contentType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          upsert: true,
+        });
+
+      if (!uploadError) {
+        const { data: signed } = await supabaseServer.storage
+          .from("workbooks")
+          .createSignedUrl(`${sessionId}/workbook.xlsx`, 60 * 60 * 24);
+        workbookUrl = signed?.signedUrl ?? null;
+      } else {
+        console.error("[interview/generate] storage upload error:", uploadError.message);
+      }
+    }
+  } catch (err) {
+    console.error("[interview/generate] workbook generation threw:", err);
+  }
+
+  return NextResponse.json({
+    sessionId,
+    estimatedHours,
+    tier,
+    clientName: extracted.clientName,
+    workbookUrl,
+    workbookBase64,
+  });
+}

@@ -10,7 +10,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
 
-  const isPublicPage = pathname?.startsWith("/q") || pathname?.startsWith("/intake");
+  const isPublicPage =
+    pathname?.startsWith("/q") ||
+    pathname?.startsWith("/intake") ||
+    pathname?.startsWith("/interview");
 
   return (
     <html lang="en">
@@ -126,6 +129,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   <NavItem href="/estimator" label="adfloEstimate" collapsed={collapsed} icon="📋" pathname={pathname} exact />
   <NavItem href="/adfloxtract" label="adfloXtract" collapsed={collapsed} icon="🔁" pathname={pathname} />
   <NavItem href="/migration" label="adfloMigrate" collapsed={collapsed} icon="↔️" pathname={pathname} />
+  <NavItem href="/interview" label="adfloInterview" collapsed={collapsed} icon="💬" pathname={pathname} />
   <NavSection label="Settings" collapsed={collapsed} />
   <NavItem href="/admin" label="Admin" collapsed={collapsed} icon="⚙️" pathname={pathname} />
   <NavItem href="/instances" label="Instances" collapsed={collapsed} icon="🖥️" pathname={pathname} />
