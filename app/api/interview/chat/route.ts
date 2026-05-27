@@ -35,6 +35,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    console.log("[interview/chat] calling Claude:", {
+      model: "claude-sonnet-4-6",
+      messageCount: messages.length,
+      firstMessage: messages[0] ?? null,
+    });
+
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -52,7 +58,7 @@ export async function POST(req: NextRequest) {
 
     if (!res.ok) {
       const text = await res.text();
-      console.error("[interview/chat] Claude error:", res.status, text.slice(0, 200));
+      console.error("[interview/chat] Claude error:", res.status, text);
       return NextResponse.json({ error: `Claude API error: ${res.status}` }, { status: 500 });
     }
 
