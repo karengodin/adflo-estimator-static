@@ -40,13 +40,35 @@ interface ExtractedData {
   orderApprovalFlow: string;
   workflowNotes: string;
   estimateAnswers: {
+    isSingleSourceOfTruth: boolean;
+    needsHistoricalImport: boolean;
+    multiStepApproval: boolean;
+    multipleDepartmentApproval: boolean;
+    conditionalRouting: boolean;
+    slaTracking: boolean;
+    crmIntegration: boolean;
+    proposalToolIntegration: boolean;
+    billingIntegration: boolean;
+    externalApiIntegration: boolean;
+    biDirectionalSync: boolean;
+    pushConnectorCount: number;
     productFormCount: number;
-    hasWorkflows: boolean;
-    hasIntegrations: boolean;
-    hasFinancialTracking: boolean;
-    hasMultipleBusinessUnits: boolean;
-    userCount: number;
     hasFlightForms: boolean;
+    hasCustomTaskForms: boolean;
+    hasBuySheets: boolean;
+    multipleBusinessUnits: boolean;
+    roleBasedPermissions: boolean;
+    customFinancialTracking: boolean;
+    billingAutomation: boolean;
+    changeOrders: boolean;
+    pacingData: boolean;
+    hasInternalLead: boolean;
+    hasDocumentedWorkflows: boolean;
+    stakeholderAlignment: boolean;
+    hasTechnicalResource: boolean;
+    goLiveDateValue: string | null;
+    moreThan20Users: boolean;
+    multipleMarkets: boolean;
   };
 }
 
@@ -124,37 +146,41 @@ function buildAnswers(
 ): Record<string, string> {
   const answers: Record<string, string> = {};
   const bySort = (n: number) => questions.find((q) => q.sort_order === n);
-
   const set = (sort: number, val: string) => {
     const q = bySort(sort);
     if (q) answers[String(q.id)] = val;
   };
+  const yn = (v: boolean) => v ? "Yes" : "No";
 
-  // Configuration
+  set(1,  yn(ea.isSingleSourceOfTruth));
+  set(2,  yn(ea.needsHistoricalImport));
+  set(3,  yn(ea.multiStepApproval));
+  set(4,  yn(ea.multipleDepartmentApproval));
+  set(5,  yn(ea.conditionalRouting));
+  set(6,  yn(ea.slaTracking));
+  set(7,  yn(ea.crmIntegration));
+  set(8,  yn(ea.proposalToolIntegration));
+  set(9,  yn(ea.billingIntegration));
+  set(10, yn(ea.externalApiIntegration));
+  set(11, yn(ea.biDirectionalSync));
+  set(12, String(ea.pushConnectorCount || 0));
   set(13, String(ea.productFormCount || 0));
-  set(14, ea.hasFlightForms ? "Yes" : "No");
-
-  // Workflow & Approvals
-  set(3, ea.hasWorkflows ? "Yes" : "No");
-  set(4, ea.hasWorkflows ? "Yes" : "No");
-
-  // Integrations
-  set(7, ea.hasIntegrations ? "Yes" : "No");
-
-  // Financial
-  set(19, ea.hasFinancialTracking ? "Yes" : "No");
-
-  // Multiple BUs
-  set(17, ea.hasMultipleBusinessUnits ? "Yes" : "No");
-
-  // Users
-  set(28, ea.userCount > 20 ? "Yes" : "No");
-
-  // Org readiness — default "Yes" (no risk penalty) for interview-based sessions
-  set(23, "Yes");
-  set(24, "Yes");
-  set(25, "Yes");
-  set(26, "Yes");
+  set(14, yn(ea.hasFlightForms));
+  set(15, yn(ea.hasCustomTaskForms));
+  set(16, yn(ea.hasBuySheets));
+  set(17, yn(ea.multipleBusinessUnits));
+  set(18, yn(ea.roleBasedPermissions));
+  set(19, yn(ea.customFinancialTracking));
+  set(20, yn(ea.billingAutomation));
+  set(21, yn(ea.changeOrders));
+  set(22, yn(ea.pacingData));
+  set(23, yn(ea.hasInternalLead));
+  set(24, yn(ea.hasDocumentedWorkflows));
+  set(25, yn(ea.stakeholderAlignment));
+  set(26, yn(ea.hasTechnicalResource));
+  if (ea.goLiveDateValue) set(27, ea.goLiveDateValue);
+  set(28, yn(ea.moreThan20Users));
+  set(29, yn(ea.multipleMarkets));
 
   return answers;
 }
@@ -362,29 +388,6 @@ export async function POST(req: NextRequest) {
     .map((m) => `${m.role === "user" ? "Client" : "Advisor"}: ${m.content}`)
     .join("\n\n");
 
-  const extractionSchema = `{
-  "clientName": "string",
-  "primaryContact": { "name": "string", "email": "string", "title": "string" },
-  "stakeholders": [{ "name": "string", "email": "string", "title": "string", "company": "string", "role": "string", "type": "C|T|CP|TP" }],
-  "products": [{ "name": "string", "channel": "string", "vendor": "string", "managedService": false }],
-  "queues": [{ "name": "string", "notes": "string" }],
-  "users": { "count": 0, "roles": ["string"] },
-  "integrations": ["string"],
-  "goLiveDate": "YYYY-MM-DD or null",
-  "businessUnits": ["string"],
-  "orderApprovalFlow": "string",
-  "workflowNotes": "string",
-  "estimateAnswers": {
-    "productFormCount": 0,
-    "hasWorkflows": false,
-    "hasIntegrations": false,
-    "hasFinancialTracking": false,
-    "hasMultipleBusinessUnits": false,
-    "userCount": 0,
-    "hasFlightForms": false
-  }
-}`;
-
   let extracted: ExtractedData;
   try {
     const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -398,11 +401,60 @@ export async function POST(req: NextRequest) {
         model: "claude-sonnet-4-6",
         max_tokens: 2000,
         system:
-          "You are extracting structured implementation discovery data from a conversation transcript. Return strict JSON only — no markdown, no backticks, no explanation.",
+          "You are extracting structured data from an AdFlo implementation discovery conversation. Return strict JSON only — no markdown, no explanation. Be aggressive about marking things as true/yes if there is ANY indication in the conversation. When in doubt, mark as true.",
         messages: [
           {
             role: "user",
-            content: `Extract implementation discovery data from this conversation and return JSON matching this exact schema:\n\n${extractionSchema}\n\nFor type field in stakeholders: C=Client, T=AdFlo, CP=Client Partner, TP=AdFlo Partner.\nFor products with no vendor mentioned, use empty string.\nFor goLiveDate, use ISO date format or null.\nFor userCount, use the actual number mentioned or 0 if unknown.\n\nCONVERSATION:\n${transcript}`,
+            content: `Extract the following from this conversation transcript. For boolean fields, return true if there is ANY mention of the concept, even indirect.
+
+TRANSCRIPT:
+${transcript}
+
+Return this exact JSON:
+{
+  "clientName": "company name mentioned",
+  "primaryContact": { "name": "person's first and last name", "email": "", "title": "their role" },
+  "stakeholders": [],
+  "products": [list each product mentioned as { "name": "", "channel": "", "vendor": "", "managedService": false }],
+  "queues": [list each team/queue mentioned as { "name": "", "notes": "" }],
+  "users": { "count": number or 0 if unknown, "roles": [] },
+  "integrations": [list each integration mentioned],
+  "goLiveDate": "YYYY-MM-DD or null",
+  "businessUnits": [list each BU mentioned],
+  "orderApprovalFlow": "description of approval process",
+  "workflowNotes": "any workflow details",
+  "estimateAnswers": {
+    "isSingleSourceOfTruth": true if they want AdFlo as primary order system,
+    "needsHistoricalImport": true if they mention importing past data,
+    "multiStepApproval": true if ANY approval steps mentioned,
+    "multipleDepartmentApproval": true if more than one team approves,
+    "conditionalRouting": true if if/then rules or conditional workflows mentioned,
+    "slaTracking": true if SLAs, deadlines, or timing rules mentioned,
+    "crmIntegration": false unless CRM explicitly mentioned,
+    "proposalToolIntegration": false unless proposal/quoting tool mentioned,
+    "billingIntegration": true if billing system or Naviga mentioned,
+    "externalApiIntegration": true if any external system integration mentioned,
+    "biDirectionalSync": true if both push AND pull to same system mentioned,
+    "pushConnectorCount": number of ad server/vendor connections mentioned,
+    "productFormCount": number of distinct product forms estimated,
+    "hasFlightForms": true if flights mentioned at all,
+    "hasCustomTaskForms": true if task-specific forms mentioned,
+    "hasBuySheets": true if IO exports or buy sheets mentioned,
+    "multipleBusinessUnits": true if more than one BU or brand mentioned,
+    "roleBasedPermissions": true if different user roles or permissions mentioned,
+    "customFinancialTracking": true if margin, COGS, or financial tracking mentioned,
+    "billingAutomation": true if automated billing or invoicing mentioned,
+    "changeOrders": true if order edits or change requests mentioned,
+    "pacingData": true if pacing, delivery tracking, or campaign monitoring mentioned,
+    "hasInternalLead": true unless they say they don't have one,
+    "hasDocumentedWorkflows": true if workflows seem well-defined in conversation,
+    "stakeholderAlignment": true unless there are signs of disagreement,
+    "hasTechnicalResource": true if integrations were discussed confidently,
+    "goLiveDateValue": "date string or null",
+    "moreThan20Users": true if user count exceeds 20,
+    "multipleMarkets": true if multiple regions or markets mentioned
+  }
+}`,
           },
         ],
       }),
@@ -422,6 +474,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 3: Map answers + compute hours ─────────────────────────────────
+  console.log("[interview/generate] extracted estimateAnswers:", JSON.stringify(extracted.estimateAnswers, null, 2));
   const answers = buildAnswers(extracted.estimateAnswers, questions);
   const estimatedHours = computeHours(questions, answers, logic);
   const tier = getTier(estimatedHours, logic.tiers);
