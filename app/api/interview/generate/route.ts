@@ -446,10 +446,10 @@ Return this exact JSON:
     "billingAutomation": true if automated billing or invoicing mentioned,
     "changeOrders": true if order edits or change requests mentioned,
     "pacingData": true if pacing, delivery tracking, or campaign monitoring mentioned,
-    "hasInternalLead": true unless they say they don't have one,
-    "hasDocumentedWorkflows": true if workflows seem well-defined in conversation,
-    "stakeholderAlignment": true unless there are signs of disagreement,
-    "hasTechnicalResource": true if integrations were discussed confidently,
+    "hasInternalLead": true ONLY if they explicitly mention a dedicated project owner, implementation lead, or someone specifically assigned to manage the AdFlo rollout — default false if not mentioned,
+    "hasDocumentedWorkflows": true ONLY if they explicitly say workflows are written down, in a wiki, or formally documented — being able to describe them verbally does NOT count — default false if not mentioned,
+    "stakeholderAlignment": true ONLY if they explicitly say leadership, sales, and ops are aligned or have agreed on moving to AdFlo — default false if not mentioned,
+    "hasTechnicalResource": true ONLY if they explicitly mention an IT team, technical contact, developer, or systems admin who will handle integrations — default false if not mentioned,
     "goLiveDateValue": "date string or null",
     "moreThan20Users": true if user count exceeds 20,
     "multipleMarkets": true if multiple regions or markets mentioned
@@ -556,5 +556,7 @@ Return this exact JSON:
     clientName: extracted.clientName,
     workbookUrl,
     workbookBase64,
+    answers,
+    estimateAnswers: extracted.estimateAnswers,
   });
 }
