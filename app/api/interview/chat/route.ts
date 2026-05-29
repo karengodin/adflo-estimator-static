@@ -34,6 +34,8 @@ Start by warmly introducing yourself and asking for the person's name and who th
 
 Always address the person by their first name, not their company name. If they give you a company name before their name, ask for their name before continuing.
 
+Before suggesting the user click "Finish & Generate", do a quick internal review. If any of these critical items were NOT discussed, ask about them: number of product forms, whether they need flights, integration count and type, user count, workflow approval steps, go-live date. Only suggest finishing when you have answers to at least these core items. If the user wants to finish early anyway, acknowledge that the estimate will be approximate and the IM will need to complete the questionnaire.
+
 When the user seems ready to wrap up, acknowledge what you've learned and let them know they can click "Finish & Generate" to create their workbook and estimate.`;
 
 export async function POST(req: NextRequest) {

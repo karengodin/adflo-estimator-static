@@ -479,6 +479,14 @@ Return this exact JSON:
   const estimatedHours = computeHours(questions, answers, logic);
   const tier = getTier(estimatedHours, logic.tiers);
 
+  const answeredCount = Object.values(answers).filter(v => v !== null && v !== "").length;
+  const confidence = {
+    score: Math.round((answeredCount / 29) * 100),
+    answeredCount,
+    totalQuestions: 29,
+    level: answeredCount >= 22 ? "high" : answeredCount >= 15 ? "medium" : "low",
+  } as const;
+
   // ── Step 4: Save session ─────────────────────────────────────────────────
   let sessionId = existingSessionId ?? "";
   try {
@@ -558,5 +566,6 @@ Return this exact JSON:
     workbookBase64,
     answers,
     estimateAnswers: extracted.estimateAnswers,
+    confidence,
   });
 }

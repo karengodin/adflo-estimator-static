@@ -15,6 +15,12 @@ interface GenerateResult {
   clientName: string;
   workbookUrl: string | null;
   workbookBase64: string;
+  confidence?: {
+    score: number;
+    answeredCount: number;
+    totalQuestions: number;
+    level: "high" | "medium" | "low";
+  };
 }
 
 const TIER_COLORS: Record<string, { bg: string; color: string; border: string }> = {
@@ -314,7 +320,7 @@ function InterviewContent() {
           >
             <div style={{ flex: 1, minWidth: 200 }}>
               <div style={{ fontSize: 13, color: "#627286", marginBottom: 4 }}>Your estimate</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 26, fontWeight: 800, color: "#0f1623" }}>
                   {result.estimatedHours} hrs
                 </span>
@@ -332,6 +338,30 @@ function InterviewContent() {
                   {result.tier} Tier
                 </span>
               </div>
+              {result.confidence && (
+                <div style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  ...(result.confidence.level === "high"
+                    ? { background: "#edf8f2", color: "#1a7a45", border: "1px solid #c0e8d0" }
+                    : result.confidence.level === "medium"
+                    ? { background: "#fff8e8", color: "#8a6417", border: "1px solid #f3e0a3" }
+                    : { background: "#fff0f0", color: "#c94b4b", border: "1px solid #f9c0c0" }),
+                }}>
+                  {result.confidence.level === "high" && (
+                    <strong>Estimate confidence: High</strong>
+                  )}
+                  {result.confidence.level === "medium" && (
+                    <><strong>Estimate confidence: Medium</strong> — your IM may adjust after reviewing the full questionnaire</>
+                  )}
+                  {result.confidence.level === "low" && (
+                    <><strong>Estimate confidence: Low</strong> — this conversation didn&apos;t cover enough ground for a reliable estimate. Your IM will complete the questionnaire before finalizing.</>
+                  )}
+                </div>
+              )}
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
