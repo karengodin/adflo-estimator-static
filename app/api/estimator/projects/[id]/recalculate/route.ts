@@ -34,22 +34,9 @@ export async function PATCH(
   }>;
   const logicSettings = logicRes.data ?? {};
 
-  console.log("[recalculate] session_id:", project.session_id);
-  console.log("[recalculate] raw answers:", JSON.stringify(answers, null, 2));
-
   const breakdown      = calcEstimateFromAnswers(answers, questions, logicSettings);
   const hoursByCategory = breakdownToHoursByCategory(breakdown);
   const totalHours      = breakdown.total;
-
-  console.log("[recalculate] calculated total:", totalHours, "| breakdown:", JSON.stringify({
-    formConfiguration:        breakdown.formConfiguration,
-    workflowConfiguration:    breakdown.workflowConfiguration,
-    integrationConfiguration: breakdown.integrationConfiguration,
-    financialConfiguration:   breakdown.financialConfiguration,
-    userPermissions:          breakdown.userPermissions,
-    riskBuffer:               breakdown.riskBuffer,
-    total:                    breakdown.total,
-  }));
   const distribution   = distributeHours(hoursByCategory, totalHours);
 
   // Build lookup maps
