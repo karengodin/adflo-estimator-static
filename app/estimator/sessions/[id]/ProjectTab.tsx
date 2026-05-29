@@ -123,7 +123,7 @@ export default function ProjectTab({
 
     if (proj?.id) {
       const varRes = await fetch(`/api/estimator/projects/${proj.id}/variance`);
-      if (varRes.ok) setVarianceRows(await varRes.json());
+      if (varRes.ok) setVarianceRows(mergeQaRows(await varRes.json()));
     }
   }, [sessionId]);
 
@@ -138,7 +138,7 @@ export default function ProjectTab({
       setProject((p) => p ? { ...p, hours_summary: result.summary } : p);
       setCurrentSessionHours(result.sessionHours);
       const varRes = await fetch(`/api/estimator/projects/${project.id}/variance`);
-      if (varRes.ok) setVarianceRows(await varRes.json());
+      if (varRes.ok) setVarianceRows(mergeQaRows(await varRes.json()));
     }
     setRecalculating(false);
   }, [project]);
@@ -403,6 +403,96 @@ export default function ProjectTab({
             ))}
           </div>
         </div>
+        {/* Team Capacity */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8a9bb0", marginBottom: 10 }}>Team Capacity</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+            {assignedIMs.map((im) => (
+              <div key={im.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 130px 28px", gap: 8, alignItems: "center" }}>
+                <input
+                  value={im.name}
+                  onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, name: e.target.value } : x))}
+                  placeholder="IM Name"
+                  style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }}
+                />
+                <input
+                  value={im.role}
+                  onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, role: e.target.value } : x))}
+                  placeholder="Role"
+                  style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }}
+                />
+                <div style={{ position: "relative" }}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={40}
+                    value={im.hoursPerWeek}
+                    onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, hoursPerWeek: Math.max(1, parseInt(e.target.value) || 1) } : x))}
+                    style={{ ...inputStyle, padding: "7px 10px", fontSize: 13, width: "100%" }}
+                  />
+                  <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#8a9bb0", pointerEvents: "none" }}>hrs/wk</span>
+                </div>
+                <select
+                  value={im.experienceMultiplier}
+                  onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, experienceMultiplier: parseFloat(e.target.value) } : x))}
+                  style={{ ...inputStyle, padding: "7px 10px", fontSize: 13, appearance: "none", cursor: "pointer" }}
+                >
+                  <option value={0.75}>0.75× Junior</option>
+                  <option value={1.0}>1.0× Mid-level</option>
+                  <option value={1.25}>1.25× Senior</option>
+                  <option value={1.5}>1.5× Expert</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setAssignedIMs((prev) => prev.filter((x) => x.id !== im.id))}
+                  style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid #f9c0c0", background: "#fff0f0", color: "#c94b4b", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit", flexShrink: 0 }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <div>
+              <button
+                type="button"
+                onClick={() => setAssignedIMs((prev) => [...prev, { id: crypto.randomUUID(), name: "", role: "", hoursPerWeek: 10, experienceMultiplier: 1.0 }])}
+                style={{ ...smallBtnStyle, fontSize: 13 }}
+              >
+                + Add IM
+              </button>
+            </div>
+          </div>
+          {assignedIMs.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 12 }}>
+              <OverviewStat label="Total Hours" value={`${totalEstForNarrative}`} sub="hrs estimated" />
+              <OverviewStat label="Weekly Capacity" value={`${weeklyCapacity}`} sub="hrs / week" />
+              <OverviewStat label="Adjusted Timeline" value={`${adjustedWeeks}`} sub="weeks" />
+            </div>
+          )}
+          {assignedIMs.length > 0 && !narrativeLoading && (
+            <div style={{ marginBottom: 10 }}>
+              <button type="button" onClick={fetchNarrative} style={{ ...smallBtnStyle, fontSize: 13 }}>
+                Get assessment
+              </button>
+            </div>
+          )}
+          {assignedIMs.length > 0 && (
+            narrativeLoading ? (
+              <div style={{ borderLeft: "3px solid #dde5ef", paddingLeft: 14 }}>
+                <div style={{ height: 13, width: "80%", background: "#edf2f7", borderRadius: 4, marginBottom: 8, animation: "pulse 1.4s ease-in-out infinite" }} />
+                <div style={{ height: 13, width: "60%", background: "#edf2f7", borderRadius: 4, animation: "pulse 1.4s ease-in-out infinite" }} />
+              </div>
+            ) : capacityError ? (
+              <div style={{ borderLeft: "3px solid #f9c0c0", paddingLeft: 14 }}>
+                <p style={{ margin: 0, fontSize: 13, color: "#c94b4b", lineHeight: 1.6 }}>{capacityError}</p>
+              </div>
+            ) : capacityNarrative ? (
+              <div style={{ borderLeft: "3px solid #dde5ef", paddingLeft: 14 }}>
+                <p style={{ margin: 0, fontSize: 13, color: "#627286", lineHeight: 1.6 }}>{capacityNarrative}</p>
+              </div>
+            ) : null
+          )}
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
           <OverviewStat
             label="Estimated Hours"
@@ -652,107 +742,7 @@ export default function ProjectTab({
         </div>
       </SectionCard>
 
-      {/* ── D: TEAM CAPACITY ── */}
-      <SectionCard title="Team Capacity">
-        {/* IM rows */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-          {assignedIMs.map((im) => (
-            <div key={im.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 130px 28px", gap: 8, alignItems: "center" }}>
-              <input
-                value={im.name}
-                onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, name: e.target.value } : x))}
-                placeholder="IM Name"
-                style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }}
-              />
-              <input
-                value={im.role}
-                onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, role: e.target.value } : x))}
-                placeholder="Role"
-                style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }}
-              />
-              <div style={{ position: "relative" }}>
-                <input
-                  type="number"
-                  min={1}
-                  max={40}
-                  value={im.hoursPerWeek}
-                  onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, hoursPerWeek: Math.max(1, parseInt(e.target.value) || 1) } : x))}
-                  style={{ ...inputStyle, padding: "7px 10px", fontSize: 13, width: "100%" }}
-                />
-                <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#8a9bb0", pointerEvents: "none" }}>hrs/wk</span>
-              </div>
-              <select
-                value={im.experienceMultiplier}
-                onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, experienceMultiplier: parseFloat(e.target.value) } : x))}
-                style={{ ...inputStyle, padding: "7px 10px", fontSize: 13, appearance: "none", cursor: "pointer" }}
-              >
-                <option value={0.75}>0.75× Junior</option>
-                <option value={1.0}>1.0× Mid-level</option>
-                <option value={1.25}>1.25× Senior</option>
-                <option value={1.5}>1.5× Expert</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => setAssignedIMs((prev) => prev.filter((x) => x.id !== im.id))}
-                style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid #f9c0c0", background: "#fff0f0", color: "#c94b4b", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit", flexShrink: 0 }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          <div>
-            <button
-              type="button"
-              onClick={() => setAssignedIMs((prev) => [...prev, { id: crypto.randomUUID(), name: "", role: "", hoursPerWeek: 10, experienceMultiplier: 1.0 }])}
-              style={{ ...smallBtnStyle, fontSize: 13 }}
-            >
-              + Add IM
-            </button>
-          </div>
-        </div>
-
-        {/* Summary stats */}
-        {assignedIMs.length > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 16 }}>
-            <OverviewStat label="Total Hours" value={`${totalEstForNarrative}`} sub="hrs estimated" />
-            <OverviewStat label="Weekly Capacity" value={`${weeklyCapacity}`} sub="hrs / week" />
-            <OverviewStat label="Adjusted Timeline" value={`${adjustedWeeks}`} sub="weeks" />
-          </div>
-        )}
-
-        {/* Get assessment button */}
-        {assignedIMs.length > 0 && !narrativeLoading && (
-          <div style={{ marginBottom: 14 }}>
-            <button
-              type="button"
-              onClick={fetchNarrative}
-              style={{ ...smallBtnStyle, fontSize: 13 }}
-            >
-              Get assessment
-            </button>
-          </div>
-        )}
-
-        {/* LLM narrative */}
-        {assignedIMs.length > 0 && (
-          narrativeLoading ? (
-            <div style={{ borderLeft: "3px solid #dde5ef", paddingLeft: 14 }}>
-              <div style={{ height: 13, width: "80%", background: "#edf2f7", borderRadius: 4, marginBottom: 8, animation: "pulse 1.4s ease-in-out infinite" }} />
-              <div style={{ height: 13, width: "60%", background: "#edf2f7", borderRadius: 4, animation: "pulse 1.4s ease-in-out infinite" }} />
-            </div>
-          ) : capacityError ? (
-            <div style={{ borderLeft: "3px solid #f9c0c0", paddingLeft: 14 }}>
-              <p style={{ margin: 0, fontSize: 13, color: "#c94b4b", lineHeight: 1.6 }}>{capacityError}</p>
-            </div>
-          ) : capacityNarrative ? (
-            <div style={{ borderLeft: "3px solid #dde5ef", paddingLeft: 14 }}>
-              <p style={{ margin: 0, fontSize: 13, color: "#627286", lineHeight: 1.6 }}>{capacityNarrative}</p>
-            </div>
-          ) : null
-        )}
-      </SectionCard>
-
-      {/* ── E: VARIANCE REPORT ── */}
+      {/* ── D: VARIANCE REPORT ── */}
       <SectionCard title="Variance Report">
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
@@ -827,6 +817,19 @@ export default function ProjectTab({
       </SectionCard>
     </div>
   );
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+function mergeQaRows(rows: { category: string; estimated_hours: number; actual_hours: number }[]) {
+  const acc: Record<string, { estimated_hours: number; actual_hours: number }> = {};
+  for (const r of rows) {
+    const key = r.category === "QA" ? "QA & Testing" : r.category;
+    if (!acc[key]) acc[key] = { estimated_hours: 0, actual_hours: 0 };
+    acc[key].estimated_hours += r.estimated_hours;
+    acc[key].actual_hours += r.actual_hours;
+  }
+  return Object.entries(acc).map(([category, v]) => ({ category, ...v }));
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────
