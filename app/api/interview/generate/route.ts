@@ -40,35 +40,35 @@ interface ExtractedData {
   orderApprovalFlow: string;
   workflowNotes: string;
   estimateAnswers: {
-    isSingleSourceOfTruth: boolean;
-    needsHistoricalImport: boolean;
-    multiStepApproval: boolean;
-    multipleDepartmentApproval: boolean;
-    conditionalRouting: boolean;
-    slaTracking: boolean;
-    crmIntegration: boolean;
-    proposalToolIntegration: boolean;
-    billingIntegration: boolean;
-    externalApiIntegration: boolean;
-    biDirectionalSync: boolean;
-    pushConnectorCount: number;
-    productFormCount: number;
-    hasFlightForms: boolean;
-    hasCustomTaskForms: boolean;
-    hasBuySheets: boolean;
-    multipleBusinessUnits: boolean;
-    roleBasedPermissions: boolean;
-    customFinancialTracking: boolean;
-    billingAutomation: boolean;
-    changeOrders: boolean;
-    pacingData: boolean;
-    hasInternalLead: boolean;
-    hasDocumentedWorkflows: boolean;
-    stakeholderAlignment: boolean;
-    hasTechnicalResource: boolean;
+    isSingleSourceOfTruth: boolean | null;
+    needsHistoricalImport: boolean | null;
+    multiStepApproval: boolean | null;
+    multipleDepartmentApproval: boolean | null;
+    conditionalRouting: boolean | null;
+    slaTracking: boolean | null;
+    crmIntegration: boolean | null;
+    proposalToolIntegration: boolean | null;
+    billingIntegration: boolean | null;
+    externalApiIntegration: boolean | null;
+    biDirectionalSync: boolean | null;
+    pushConnectorCount: number | null;
+    productFormCount: number | null;
+    hasFlightForms: boolean | null;
+    hasCustomTaskForms: boolean | null;
+    hasBuySheets: boolean | null;
+    multipleBusinessUnits: boolean | null;
+    roleBasedPermissions: boolean | null;
+    customFinancialTracking: boolean | null;
+    billingAutomation: boolean | null;
+    changeOrders: boolean | null;
+    pacingData: boolean | null;
+    hasInternalLead: boolean | null;
+    hasDocumentedWorkflows: boolean | null;
+    stakeholderAlignment: boolean | null;
+    hasTechnicalResource: boolean | null;
     goLiveDateValue: string | null;
-    moreThan20Users: boolean;
-    multipleMarkets: boolean;
+    moreThan20Users: boolean | null;
+    multipleMarkets: boolean | null;
   };
 }
 
@@ -146,11 +146,12 @@ function buildAnswers(
 ): Record<string, string> {
   const answers: Record<string, string> = {};
   const bySort = (n: number) => questions.find((q) => q.sort_order === n);
-  const set = (sort: number, val: string) => {
+  const set = (sort: number, val: string | null) => {
+    if (val === null) return;
     const q = bySort(sort);
     if (q) answers[String(q.id)] = val;
   };
-  const yn = (v: boolean) => v ? "Yes" : "No";
+  const yn = (v: boolean | null) => v === null ? null : v ? "Yes" : "No";
 
   set(1,  yn(ea.isSingleSourceOfTruth));
   set(2,  yn(ea.needsHistoricalImport));
@@ -163,8 +164,8 @@ function buildAnswers(
   set(9,  yn(ea.billingIntegration));
   set(10, yn(ea.externalApiIntegration));
   set(11, yn(ea.biDirectionalSync));
-  set(12, String(ea.pushConnectorCount || 0));
-  set(13, String(ea.productFormCount || 0));
+  set(12, ea.pushConnectorCount === null ? null : String(ea.pushConnectorCount));
+  set(13, ea.productFormCount === null ? null : String(ea.productFormCount));
   set(14, yn(ea.hasFlightForms));
   set(15, yn(ea.hasCustomTaskForms));
   set(16, yn(ea.hasBuySheets));
@@ -178,7 +179,7 @@ function buildAnswers(
   set(24, yn(ea.hasDocumentedWorkflows));
   set(25, yn(ea.stakeholderAlignment));
   set(26, yn(ea.hasTechnicalResource));
-  if (ea.goLiveDateValue) set(27, ea.goLiveDateValue);
+  set(27, ea.goLiveDateValue);
   set(28, yn(ea.moreThan20Users));
   set(29, yn(ea.multipleMarkets));
 
@@ -424,19 +425,20 @@ Return this exact JSON:
   "orderApprovalFlow": "description of approval process",
   "workflowNotes": "any workflow details",
   "estimateAnswers": {
+    "IMPORTANT": "Return null (not false, not 0) for any field where that topic was not discussed in the conversation at all.",
     "isSingleSourceOfTruth": true if they want AdFlo as primary order system,
     "needsHistoricalImport": true if they mention importing past data,
     "multiStepApproval": true if ANY approval steps mentioned,
     "multipleDepartmentApproval": true if more than one team approves,
     "conditionalRouting": true if if/then rules or conditional workflows mentioned,
     "slaTracking": true if SLAs, deadlines, or timing rules mentioned,
-    "crmIntegration": false unless CRM explicitly mentioned,
-    "proposalToolIntegration": false unless proposal/quoting tool mentioned,
+    "crmIntegration": false if CRM not mentioned else true,
+    "proposalToolIntegration": false if proposal/quoting tool not mentioned else true,
     "billingIntegration": true if billing system or Naviga mentioned,
     "externalApiIntegration": true if any external system integration mentioned,
     "biDirectionalSync": true if both push AND pull to same system mentioned,
-    "pushConnectorCount": number of ad server/vendor connections mentioned,
-    "productFormCount": number of distinct product forms estimated,
+    "pushConnectorCount": number of ad server/vendor connections mentioned or null if not discussed,
+    "productFormCount": number of distinct product forms estimated or null if not discussed,
     "hasFlightForms": true if flights mentioned at all,
     "hasCustomTaskForms": true if task-specific forms mentioned,
     "hasBuySheets": true if IO exports or buy sheets mentioned,
@@ -446,10 +448,10 @@ Return this exact JSON:
     "billingAutomation": true if automated billing or invoicing mentioned,
     "changeOrders": true if order edits or change requests mentioned,
     "pacingData": true if pacing, delivery tracking, or campaign monitoring mentioned,
-    "hasInternalLead": true ONLY if they explicitly mention a dedicated project owner, implementation lead, or someone specifically assigned to manage the AdFlo rollout — default false if not mentioned,
-    "hasDocumentedWorkflows": true ONLY if they explicitly say workflows are written down, in a wiki, or formally documented — being able to describe them verbally does NOT count — default false if not mentioned,
-    "stakeholderAlignment": true ONLY if they explicitly say leadership, sales, and ops are aligned or have agreed on moving to AdFlo — default false if not mentioned,
-    "hasTechnicalResource": true ONLY if they explicitly mention an IT team, technical contact, developer, or systems admin who will handle integrations — default false if not mentioned,
+    "hasInternalLead": true ONLY if they explicitly mention a dedicated project owner, implementation lead, or someone specifically assigned to manage the AdFlo rollout — null if not discussed,
+    "hasDocumentedWorkflows": true ONLY if they explicitly say workflows are written down, in a wiki, or formally documented — being able to describe them verbally does NOT count — null if not discussed,
+    "stakeholderAlignment": true ONLY if they explicitly say leadership, sales, and ops are aligned or have agreed on moving to AdFlo — null if not discussed,
+    "hasTechnicalResource": true ONLY if they explicitly mention an IT team, technical contact, developer, or systems admin who will handle integrations — null if not discussed,
     "goLiveDateValue": "date string or null",
     "moreThan20Users": true if user count exceeds 20,
     "multipleMarkets": true if multiple regions or markets mentioned
