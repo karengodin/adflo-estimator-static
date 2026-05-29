@@ -581,6 +581,8 @@ export default function EstimatorPage() {
 
   // ── Derived values ──
   const est = useMemo(() => calcEstimate(questions, answers, logic), [questions, answers, logic]);
+  // eslint-disable-next-line no-console
+  console.log("[estimator] answers:", JSON.stringify(answers), "| live total:", est.expected, "| breakdown:", { base: est.base, products: est.products, connectors: est.connectors, subtotal: est.subtotal, multiplier: est.multiplier });
   const currentTier = useMemo(() => getTier(est.expected, logic), [est.expected, logic]);
   const visibleQuestions = useMemo(() => questions.filter((q) => isVisible(q, questions, answers)), [questions, answers]);
   const answeredCount = useMemo(

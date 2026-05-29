@@ -33,7 +33,10 @@ export async function GET() {
     tiers:                tiersToUi(data.tiers as DbTier[]),
     productHourRate:      d.product_hour_rate as number ?? 4,
     connectorHourRate:    d.connector_hour_rate as number ?? 12,
-    riskMultipliers:      (d.risk_multipliers as Array<{ sort_order: number; condition: string; multiplier: number }> | null) ?? [
+    riskMultipliers:      (
+      (d.risk_multipliers as Array<{ sort_order?: number; question_id?: number; condition: string; multiplier: number }> | null)
+        ?.map((rm) => ({ sort_order: rm.sort_order ?? rm.question_id ?? 0, condition: rm.condition, multiplier: rm.multiplier }))
+    ) ?? [
       { sort_order: 23, condition: "No", multiplier: 1.15 },
       { sort_order: 24, condition: "No", multiplier: 1.10 },
       { sort_order: 25, condition: "No", multiplier: 1.20 },

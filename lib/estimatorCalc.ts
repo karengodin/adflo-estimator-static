@@ -81,7 +81,10 @@ export function calcEstimateFromAnswers(
       return q.question_type === "number" ? parseInt(a || "0", 10) > 0 : a === "Yes";
     });
 
-  const riskMultipliers = logicSettings.risk_multipliers ?? [
+  const riskMultipliers = (
+    (logicSettings.risk_multipliers as Array<{ sort_order?: number; question_id?: number; condition: string; multiplier: number }> | null | undefined)
+      ?.map((rm) => ({ sort_order: rm.sort_order ?? rm.question_id ?? 0, condition: rm.condition, multiplier: rm.multiplier }))
+  ) ?? [
     { sort_order: 23, condition: "No", multiplier: 1.15 },
     { sort_order: 24, condition: "No", multiplier: 1.10 },
     { sort_order: 25, condition: "No", multiplier: 1.20 },

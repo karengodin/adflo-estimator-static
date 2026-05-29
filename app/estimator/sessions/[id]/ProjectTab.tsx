@@ -398,7 +398,7 @@ export default function ProjectTab({
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
-          <OverviewStat label="Estimated Hours" value={`${totalEst}`} sub="hrs" />
+          <OverviewStat label="Estimated Hours" value={`${totalEst}`} sub="hrs — includes overhead (QA, PM, documentation)" />
           <OverviewStat label="Actual Hours" value={`${totalAct}`} sub="hrs" />
           <OverviewStat
             label="Variance"
