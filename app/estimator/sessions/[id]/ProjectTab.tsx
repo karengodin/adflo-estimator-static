@@ -98,7 +98,11 @@ export default function ProjectTab({
   const [newVersionReason, setNewVersionReason] = useState("");
   const [savingVersion, setSavingVersion] = useState(false);
   const [localHours, setLocalHours] = useState<Record<string, string>>({});
+  const [currentSessionHours, setCurrentSessionHours] = useState(estimatedHours);
   const autoRecalcDone = useRef(false);
+
+  // Keep in sync if parent re-renders with a fresher value
+  useEffect(() => { setCurrentSessionHours(estimatedHours); }, [estimatedHours]);
 
   // Team Capacity
   const [assignedIMs, setAssignedIMs] = useState<AssignedIM[]>([]);
@@ -130,8 +134,9 @@ export default function ProjectTab({
     setRecalculating(true);
     const res = await fetch(`/api/estimator/projects/${project.id}/recalculate`, { method: "PATCH" });
     if (res.ok) {
-      const updatedSummary: HoursSummary[] = await res.json();
-      setProject((p) => p ? { ...p, hours_summary: updatedSummary } : p);
+      const result = await res.json() as { summary: HoursSummary[]; sessionHours: number };
+      setProject((p) => p ? { ...p, hours_summary: result.summary } : p);
+      setCurrentSessionHours(result.sessionHours);
       const varRes = await fetch(`/api/estimator/projects/${project.id}/variance`);
       if (varRes.ok) setVarianceRows(await varRes.json());
     }
@@ -338,6 +343,7 @@ export default function ProjectTab({
   const totalEst = varianceRows.reduce((s, r) => s + r.estimated_hours, 0) || estimatedHours;
   const totalAct = varianceRows.reduce((s, r) => s + r.actual_hours, 0);
   const overallVariance = totalEst - totalAct;
+  const overheadHrs = Math.max(0, totalEst - currentSessionHours);
 
   // Answers-changed banner: compare current estimatedHours with latest version
   const latestVersion = versions.find((v) => v.is_current) ?? versions[versions.length - 1];
@@ -398,7 +404,13 @@ export default function ProjectTab({
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
-          <OverviewStat label="Estimated Hours" value={`${totalEst}`} sub="hrs — includes overhead (QA, PM, documentation)" />
+          <OverviewStat
+            label="Estimated Hours"
+            value={`${totalEst}`}
+            sub={overheadHrs > 0
+              ? `hrs — includes ~${overheadHrs} hrs overhead (QA, PM, documentation)`
+              : "hrs"}
+          />
           <OverviewStat label="Actual Hours" value={`${totalAct}`} sub="hrs" />
           <OverviewStat
             label="Variance"

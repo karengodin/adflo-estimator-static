@@ -85,13 +85,19 @@ export async function PATCH(
       }
     }
   }
-  await Promise.all(updates);
+  await Promise.all([
+    ...updates,
+    supabaseServer
+      .from("sessions")
+      .update({ estimated_hours: totalHours })
+      .eq("id", project.session_id),
+  ]);
 
-  // Return refreshed hours_summary
+  // Return refreshed hours_summary + the new session base hours
   const { data: refreshed } = await supabaseServer
     .from("hours_summary")
     .select("*")
     .eq("project_id", id);
 
-  return NextResponse.json(refreshed ?? []);
+  return NextResponse.json({ summary: refreshed ?? [], sessionHours: totalHours });
 }
