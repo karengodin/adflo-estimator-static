@@ -412,7 +412,7 @@ export default function ProjectTab({
                 <input
                   value={im.name}
                   onChange={(e) => setAssignedIMs((prev) => prev.map((x) => x.id === im.id ? { ...x, name: e.target.value } : x))}
-                  placeholder="IM Name"
+                  placeholder="Resource Name"
                   style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }}
                 />
                 <input
@@ -457,7 +457,7 @@ export default function ProjectTab({
                 onClick={() => setAssignedIMs((prev) => [...prev, { id: crypto.randomUUID(), name: "", role: "", hoursPerWeek: 10, experienceMultiplier: 1.0 }])}
                 style={{ ...smallBtnStyle, fontSize: 13 }}
               >
-                + Add IM
+                + Add Resource
               </button>
             </div>
           </div>
