@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import ProjectTab from "./sessions/[id]/ProjectTab";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -34,6 +36,8 @@ type Question = {
 
 type Session = {
   id: string;
+  slug: string;
+  session_number: number;
   company_name: string | null;
   primary_contact: string | null;
   answers: Record<string, string>;
@@ -485,6 +489,7 @@ function getStatusStyle(status: string): React.CSSProperties {
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export default function EstimatorPage() {
+  const router = useRouter();
   const [screen, setScreen] = useState<Screen>("loading");
   const [questions, setQuestions] = useState<Question[]>([]);
   const [logic, setLogic] = useState<Logic>(DEFAULT_LOGIC);
@@ -660,19 +665,8 @@ export default function EstimatorPage() {
   };
 
   // ── Open session ──
-  const openSession = async (id: string) => {
-    setScreen("loading");
-    const res = await fetch(`/api/estimator/sessions/${id}`);
-    if (!res.ok) { setScreen("team-dashboard"); return; }
-    const s: Session = await res.json();
-    setCurrentSession(s);
-    setAnswers(s.answers || {});
-    setActivatedLevers(s.activated_levers || []);
-    setCompanyName(s.company_name || "");
-    setContactName(s.primary_contact || "");
-    setNotes(s.notes || "");
-    setActiveTab("questionnaire");
-    setScreen("team-session");
+  const openSession = (slug: string, sessionNumber: number) => {
+    router.push(`/estimator/${slug}/${sessionNumber}` as Route);
   };
 
   // ── Create session ──
@@ -701,7 +695,7 @@ export default function EstimatorPage() {
       setNewSessionOpen(false);
       setNewSessionName("");
       setNewSessionRep("");
-      await openSession(data.id);
+      openSession(data.slug, data.session_number);
     } catch (e: unknown) {
       setNewSessionError(e instanceof Error ? e.message : "Error creating session");
     } finally {
@@ -1256,7 +1250,7 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
                       const pct = questions.length > 0 ? (answered / questions.length) * 100 : 0;
                       const isLast = i === filteredSessions.length - 1;
                       return (
-                        <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => openSession(s.id)} onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")} onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                        <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => openSession(s.slug, s.session_number)} onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")} onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                           <td style={{ ...tdStyle, fontWeight: 600, color: "#0f1623", borderBottom: isLast ? "none" : "1px solid #edf2f7" }}>{s.company_name || "—"}</td>
                           <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7" }}><span style={getStatusStyle(s.status || "draft")}>{s.status || "draft"}</span></td>
                           <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7" }}><span style={getTierStyle(s.tier)}>• {s.tier}</span></td>
@@ -1273,7 +1267,7 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
                           <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7", color: "#8a9bb0", fontSize: 12 }}>{new Date(s.updated_at || s.submitted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
                           <td style={{ ...tdStyle, borderBottom: isLast ? "none" : "1px solid #edf2f7" }} onClick={(e) => e.stopPropagation()}>
                             <div style={{ display: "flex", gap: 6 }}>
-                              <button onClick={() => openSession(s.id)} style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px" }}>Open →</button>
+                              <button onClick={() => openSession(s.slug, s.session_number)} style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px" }}>Open →</button>
                               {Array.isArray(s.transcript) && s.transcript.length > 0 && (
                                 <button onClick={() => setTranscriptSession(s)} style={{ ...outlineBtnStyle, fontSize: 12, padding: "5px 12px", color: "#2f6fed", borderColor: "#cddcff" }}>Transcript</button>
                               )}

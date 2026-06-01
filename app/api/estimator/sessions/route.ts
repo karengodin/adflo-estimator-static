@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 
+function toSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/[\s-]+/g, "-");
+}
+
 // DB columns: id, client_name, primary_contact, rep_name, created_at, updated_at,
 //             status, answers, activated_levers, estimated_hours, tier, notes, share_token
 //
@@ -15,6 +23,8 @@ import { supabaseServer } from "../../../../lib/supabaseServer";
 type DbSession = {
   id: string;
   client_name: string;
+  slug: string;
+  session_number: number;
   primary_contact: string | null;
   created_at: string;
   updated_at: string | null;
@@ -31,6 +41,8 @@ type DbSession = {
 function toUi(row: DbSession) {
   return {
     id:               row.id,
+    slug:             row.slug,
+    session_number:   row.session_number,
     company_name:     row.client_name,
     primary_contact:  row.primary_contact ?? null,
     answers:          row.answers ?? {},
@@ -47,11 +59,28 @@ function toUi(row: DbSession) {
   };
 }
 
-// GET — list all sessions, newest first
-export async function GET() {
+const SESSION_SELECT = "id, slug, session_number, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes, intake_notes, transcript";
+
+// GET — list all sessions (newest first) or single session by ?slug=&session_number=
+export async function GET(req: NextRequest) {
+  const slug          = req.nextUrl.searchParams.get("slug");
+  const sessionNumber = req.nextUrl.searchParams.get("session_number");
+
+  if (slug && sessionNumber) {
+    const { data, error } = await supabaseServer
+      .from("sessions")
+      .select(SESSION_SELECT)
+      .eq("slug", slug)
+      .eq("session_number", parseInt(sessionNumber, 10))
+      .single();
+
+    if (error || !data) return NextResponse.json({ error: error?.message ?? "Not found" }, { status: 404 });
+    return NextResponse.json(toUi(data as DbSession));
+  }
+
   const { data, error } = await supabaseServer
     .from("sessions")
-    .select("id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes, intake_notes, transcript")
+    .select(SESSION_SELECT)
     .order("updated_at", { ascending: false });
 
   if (error) {
@@ -75,10 +104,13 @@ export async function POST(req: NextRequest) {
     status: string;
   };
 
+  const clientName = body.company_name || "Untitled";
+
   const { data, error } = await supabaseServer
     .from("sessions")
     .insert({
-      client_name:      body.company_name || "Untitled",
+      client_name:      clientName,
+      slug:             toSlug(clientName),
       primary_contact:  body.primary_contact ?? null,
       answers:          body.answers ?? {},
       activated_levers: body.activated_levers ?? [],
@@ -86,7 +118,7 @@ export async function POST(req: NextRequest) {
       tier:             body.tier ?? "Bronze",
       status:           body.status ?? "draft",
     })
-    .select("id, client_name, primary_contact, created_at, updated_at, status, answers, activated_levers, estimated_hours, tier, notes")
+    .select(SESSION_SELECT)
     .single();
 
   if (error || !data) {
