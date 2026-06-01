@@ -37,12 +37,21 @@ type HoursSummary = {
   notes: string | null;
 };
 
+type AssignedIM = {
+  id: string;
+  name: string;
+  role: string;
+  hoursPerWeek: number;
+  experienceMultiplier: number;
+};
+
 type Project = {
   id: string;
   session_id: string;
   status: string;
   created_at: string;
   updated_at: string;
+  team_assignments: AssignedIM[] | null;
   implementation_phases: Phase[];
   project_milestones: Milestone[];
   hours_summary: HoursSummary[];
@@ -57,14 +66,6 @@ type EstimateVersion = {
   reason_for_change: string | null;
   is_current: boolean;
   created_at: string;
-};
-
-type AssignedIM = {
-  id: string;
-  name: string;
-  role: string;
-  hoursPerWeek: number;
-  experienceMultiplier: number;
 };
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -110,6 +111,14 @@ export default function ProjectTab({
   const [capacityError, setCapacityError] = useState<string | null>(null);
   const [narrativeLoading, setNarrativeLoading] = useState(false);
   const narrativeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // kept for cleanup safety
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const imsInitialized = useRef(false);
+
+  // Workbook
+  const [workbookExists, setWorkbookExists] = useState(false);
+  const [workbookFilename, setWorkbookFilename] = useState<string | null>(null);
+  const [workbookGenerating, setWorkbookGenerating] = useState(false);
+  const [workbookChecked, setWorkbookChecked] = useState(false);
 
   const loadData = useCallback(async () => {
     const [projRes, versRes] = await Promise.all([
@@ -124,10 +133,29 @@ export default function ProjectTab({
     if (proj?.id) {
       const varRes = await fetch(`/api/estimator/projects/${proj.id}/variance`);
       if (varRes.ok) setVarianceRows(mergeQaRows(await varRes.json()));
+
+      const wbRes = await fetch(`/api/estimator/projects/${proj.id}/workbook?check=true`);
+      if (wbRes.ok) {
+        const wbData = await wbRes.json() as { exists: boolean; filename: string };
+        if (wbData.exists) {
+          setWorkbookExists(true);
+          setWorkbookFilename(wbData.filename);
+        }
+      }
+      setWorkbookChecked(true);
     }
   }, [sessionId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Initialise assignedIMs from persisted team_assignments on first project load
+  useEffect(() => {
+    if (!project || imsInitialized.current) return;
+    imsInitialized.current = true;
+    if (Array.isArray(project.team_assignments) && project.team_assignments.length > 0) {
+      setAssignedIMs(project.team_assignments);
+    }
+  }, [project]);
 
   const recalculate = useCallback(async () => {
     if (!project) return;
@@ -202,6 +230,19 @@ export default function ProjectTab({
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
+
+  function queueSave(ims: AssignedIM[]) {
+    if (!project) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    const projectId = project.id;
+    saveTimerRef.current = setTimeout(async () => {
+      await fetch(`/api/estimator/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ team_assignments: ims }),
+      });
+    }, 800);
+  }
 
   async function startProject() {
     setCreating(true);
@@ -290,6 +331,35 @@ export default function ProjectTab({
     setNewVersionReason("");
     await loadData();
     setSavingVersion(false);
+  }
+
+  async function generateWorkbook() {
+    if (!project) return;
+    setWorkbookGenerating(true);
+    console.log("[generateWorkbook] assignedIMs being sent:", assignedIMs);
+    try {
+      const res = await fetch(`/api/estimator/projects/${project.id}/workbook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignedIMs }),
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const disposition = res.headers.get("Content-Disposition") ?? "";
+        const nameMatch = disposition.match(/filename="([^"]+)"/);
+        const fname = nameMatch?.[1] ?? "AdFlo_Workbook.xlsx";
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fname;
+        a.click();
+        URL.revokeObjectURL(url);
+        setWorkbookExists(true);
+        setWorkbookFilename(fname);
+      }
+    } finally {
+      setWorkbookGenerating(false);
+    }
   }
 
   // ── Render guards ───────────────────────────────────────────────────────────
@@ -403,8 +473,42 @@ export default function ProjectTab({
             ))}
           </div>
         </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+          <OverviewStat
+            label="Estimated Hours"
+            value={`${totalEst}`}
+            sub={overheadHrs > 0
+              ? `hrs — includes ~${overheadHrs} hrs overhead (QA, PM, documentation)`
+              : "hrs"}
+          />
+          <OverviewStat label="Actual Hours" value={`${totalAct}`} sub="hrs" />
+          <OverviewStat
+            label="Variance"
+            value={`${overallVariance >= 0 ? "+" : ""}${overallVariance}`}
+            sub="hrs"
+            accent={overallVariance >= 0 ? "#1f9d55" : "#c94b4b"}
+          />
+        </div>
+
+        <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={recalculate}
+            disabled={recalculating}
+            style={{
+              ...smallBtnStyle,
+              display: "flex", alignItems: "center", gap: 6,
+              opacity: recalculating ? 0.6 : 1,
+            }}
+          >
+            {recalculating
+              ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid #b0bfcc", borderTopColor: "#2f6fed", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} /> Recalculating…</>
+              : "↻ Recalculate Estimated Hours"}
+          </button>
+        </div>
+
         {/* Team Capacity */}
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginTop: 20, marginBottom: 0 }}>
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8a9bb0", marginBottom: 10 }}>Team Capacity</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
             {assignedIMs.map((im) => (
@@ -444,7 +548,11 @@ export default function ProjectTab({
                 </select>
                 <button
                   type="button"
-                  onClick={() => setAssignedIMs((prev) => prev.filter((x) => x.id !== im.id))}
+                  onClick={() => {
+                    const newIMs = assignedIMs.filter((x) => x.id !== im.id);
+                    setAssignedIMs(newIMs);
+                    queueSave(newIMs);
+                  }}
                   style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid #f9c0c0", background: "#fff0f0", color: "#c94b4b", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit", flexShrink: 0 }}
                 >
                   ×
@@ -454,7 +562,11 @@ export default function ProjectTab({
             <div>
               <button
                 type="button"
-                onClick={() => setAssignedIMs((prev) => [...prev, { id: crypto.randomUUID(), name: "", role: "", hoursPerWeek: 10, experienceMultiplier: 1.0 }])}
+                onClick={() => {
+                  const newIMs = [...assignedIMs, { id: crypto.randomUUID(), name: "", role: "", hoursPerWeek: 10, experienceMultiplier: 1.0 }];
+                  setAssignedIMs(newIMs);
+                  queueSave(newIMs);
+                }}
                 style={{ ...smallBtnStyle, fontSize: 13 }}
               >
                 + Add Resource
@@ -493,39 +605,56 @@ export default function ProjectTab({
           )}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
-          <OverviewStat
-            label="Estimated Hours"
-            value={`${totalEst}`}
-            sub={overheadHrs > 0
-              ? `hrs — includes ~${overheadHrs} hrs overhead (QA, PM, documentation)`
-              : "hrs"}
-          />
-          <OverviewStat label="Actual Hours" value={`${totalAct}`} sub="hrs" />
-          <OverviewStat
-            label="Variance"
-            value={`${overallVariance >= 0 ? "+" : ""}${overallVariance}`}
-            sub="hrs"
-            accent={overallVariance >= 0 ? "#1f9d55" : "#c94b4b"}
-          />
-        </div>
-
-        <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            onClick={recalculate}
-            disabled={recalculating}
-            style={{
-              ...smallBtnStyle,
-              display: "flex", alignItems: "center", gap: 6,
-              opacity: recalculating ? 0.6 : 1,
-            }}
-          >
-            {recalculating
-              ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid #b0bfcc", borderTopColor: "#2f6fed", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} /> Recalculating…</>
-              : "↻ Recalculate Estimated Hours"}
-          </button>
-        </div>
+        {/* Workbook */}
+        {workbookChecked && (
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8a9bb0", marginBottom: 10 }}>Implementation Workbook</div>
+            {workbookExists ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <a
+                  href={`/api/estimator/projects/${project.id}/workbook`}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "7px 16px", borderRadius: 9, background: "#2f6fed", color: "#fff",
+                    fontWeight: 600, fontSize: 13.5, textDecoration: "none",
+                  }}
+                >
+                  ↓ Download Workbook
+                </a>
+                {workbookFilename && (
+                  <span style={{ fontSize: 12, color: "#8a9bb0" }}>{workbookFilename}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={generateWorkbook}
+                  disabled={workbookGenerating}
+                  style={{ ...smallBtnStyle, marginLeft: "auto" }}
+                >
+                  {workbookGenerating ? "Rebuilding…" : "↻ Regenerate"}
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                  type="button"
+                  onClick={generateWorkbook}
+                  disabled={workbookGenerating}
+                  style={{
+                    padding: "8px 18px", borderRadius: 9, border: "none",
+                    background: workbookGenerating ? "#b0c4e8" : "#2f6fed", color: "#fff",
+                    fontWeight: 600, fontSize: 13.5, cursor: workbookGenerating ? "not-allowed" : "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {workbookGenerating ? "Building workbook…" : "Generate Workbook"}
+                </button>
+                {!workbookGenerating && (
+                  <span style={{ fontSize: 12.5, color: "#8a9bb0" }}>Creates an Excel workbook pre-filled with project data</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Phase timeline */}
         <div style={{ marginTop: 20 }}>

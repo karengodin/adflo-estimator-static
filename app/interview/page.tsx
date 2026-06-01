@@ -13,8 +13,6 @@ interface GenerateResult {
   estimatedHours: number;
   tier: string;
   clientName: string;
-  workbookUrl: string | null;
-  workbookBase64: string;
   confidence?: {
     score: number;
     answeredCount: number;
@@ -175,25 +173,6 @@ function InterviewContent() {
     }
   };
 
-  const downloadWorkbook = () => {
-    if (!result) return;
-    if (result.workbookUrl) {
-      window.open(result.workbookUrl, "_blank");
-      return;
-    }
-    // Fallback: decode base64 and download directly
-    const bytes = Uint8Array.from(atob(result.workbookBase64), (c) => c.charCodeAt(0));
-    const blob = new Blob([bytes], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(result.clientName || "AdFlo").replace(/\s+/g, "_")}_AdFlo_Workbook_${new Date().toISOString().split("T")[0]}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const copyShareLink = async () => {
     if (!result?.sessionId) return;
     try {
@@ -293,7 +272,7 @@ function InterviewContent() {
         )}
         {generating && (
           <div style={{ fontSize: 13, color: "#2f6fed", fontWeight: 500 }}>
-            Generating your workbook…
+            Analyzing conversation…
           </div>
         )}
       </div>
@@ -365,24 +344,6 @@ function InterviewContent() {
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                onClick={downloadWorkbook}
-                style={{
-                  background: "#0f1623",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 9,
-                  padding: "9px 16px",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                ↓ Download Workbook
-              </button>
               <a
                 href="/estimator"
                 style={{

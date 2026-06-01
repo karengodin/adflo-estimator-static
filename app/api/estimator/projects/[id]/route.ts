@@ -25,10 +25,11 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
-  const body = await req.json() as { status?: string };
+  const body = await req.json() as { status?: string; team_assignments?: unknown };
 
   const patch: Record<string, unknown> = {};
-  if (body.status !== undefined) patch.status = body.status;
+  if (body.status !== undefined)           patch.status           = body.status;
+  if (body.team_assignments !== undefined) patch.team_assignments = body.team_assignments;
 
   const { data, error } = await supabaseServer
     .from("implementation_projects")

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
-import * as XLSX from "xlsx";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -184,144 +183,6 @@ function buildAnswers(
   set(29, yn(ea.multipleMarkets));
 
   return answers;
-}
-
-function buildWorkbook(extracted: ExtractedData): Buffer {
-  const wb = XLSX.utils.book_new();
-
-  // ── Project Schedule ──
-  const scheduleRows: unknown[][] = [
-    ["Phase Title", "Start Date", "Planned End Date", "Duration (days)", "Actual Completion Date", "Status", "AdFlo Owner", "Resources", "Risks", "Issues", "Comments"],
-    // Initiation
-    ["Initiation", "", "", "", "", "", "", "", "", "", ""],
-    ["Project Kickoff", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["SRD Review & Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Stakeholder Introductions", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Workbook Completion", "", "", "", "", "Not Started", "", "", "", "", ""],
-    // Discovery
-    ["Discovery", "", "", "", "", "", "", "", "", "", ""],
-    ["Product Form Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Order Form Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Task Form Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Workflow Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["User & Role Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Integration Discovery", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Checkpoint 1: Documentation Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
-    // UAT Configuration
-    ["UAT Configuration", "", "", "", "", "", "", "", "", "", ""],
-    ["Product & Order Form Build", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Workflow Configuration", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["User Setup & Permissions", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Integration Setup", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Checkpoint 2: UAT Start", "", "", "", "", "Not Started", "", "", "", "", ""],
-    // End-User Training
-    ["End-User Training", "", "", "", "", "", "", "", "", "", ""],
-    ["Admin Training", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["End-User Training Sessions", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Training Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
-    // UAT
-    ["UAT", "", "", "", "", "", "", "", "", "", ""],
-    ["UAT Execution", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Bug Triage & Fixes", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["UAT Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Checkpoint 3: UAT Sign-Off", "", "", "", "", "Not Started", "", "", "", "", ""],
-    // Launch
-    ["Launch", "", "", "", "", "", "", "", "", "", ""],
-    ["Go-Live Preparation", "", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Go-Live", extracted.goLiveDate || "TBD", "", "", "", "Not Started", "", "", "", "", ""],
-    ["Post-Launch Hypercare", "", "", "", "", "Not Started", "", "", "", "", ""],
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(scheduleRows), "Project Schedule");
-
-  // ── Stakeholder Register ──
-  const stakeRows: unknown[][] = [
-    ["Stakeholder (Name - suffix)", "Email", "Title", "Project Role", "Project Involvement", "Comm Freq", "Business SME", "Internal System SME", "Involved in Sale"],
-  ];
-  if (extracted.primaryContact?.name) {
-    const alreadyListed = extracted.stakeholders.some(
-      (s) => s.name === extracted.primaryContact.name
-    );
-    if (!alreadyListed) {
-      stakeRows.push([
-        `${extracted.primaryContact.name} - C`,
-        extracted.primaryContact.email || "",
-        extracted.primaryContact.title || "",
-        "Primary Contact",
-        "High",
-        "Weekly",
-        "No",
-        "No",
-        "No",
-      ]);
-    }
-  }
-  for (const s of extracted.stakeholders) {
-    stakeRows.push([
-      `${s.name || ""} - ${s.type || "C"}`,
-      s.email || "",
-      s.title || "",
-      s.role || "",
-      "TBD",
-      "TBD",
-      "No",
-      "No",
-      "No",
-    ]);
-  }
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stakeRows), "Stakeholder Register");
-
-  // ── Master Product List ──
-  const productRows: unknown[][] = [
-    ["Product Name", "Subproducts", "Vendor/Platform", "Team", "In House/Managed Service"],
-    ...extracted.products.map((p) => [
-      p.name || "",
-      "",
-      p.vendor || "",
-      "",
-      p.managedService ? "Managed Service" : "In House",
-    ]),
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(productRows), "Master Product List");
-
-  // ── Queue Names ──
-  const queueRows: unknown[][] = [
-    ["Queue Name", "Description / Notes"],
-    ...extracted.queues.map((q) => [q.name || "", q.notes || ""]),
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(queueRows), "Queue Names");
-
-  // ── Users ──
-  const userRows: unknown[][] = [
-    ["User", "Email", "Business Unit", "Queue", "Data Profile", "Type", "AdFlo Role", "Status"],
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(userRows), "Users");
-
-  // ── Governance ──
-  const governanceRows: unknown[][] = [
-    ["Meeting Cadence", "", "", ""],
-    ["Meeting Type", "Next Meeting", "Notes", ""],
-    ["Weekly Status", "", "", ""],
-    ["Working Session", "", "", ""],
-    ["Technical Call", "", "", ""],
-    ["Steering Committee", "", "", ""],
-    ["Launch Call", "", "", ""],
-    [],
-    ["Contracted Hours Tracker", "", "", ""],
-    ["Phase", "Contracted Hours", "Hours Used", "Hours Remaining"],
-    ["Discovery", "", "", ""],
-    ["Configuration", "", "", ""],
-    ["Training", "", "", ""],
-    ["Testing", "", "", ""],
-    ["Total", "", "", ""],
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(governanceRows), "Governance");
-
-  // ── Blank sheets ──
-  for (const name of ["Order Form", "Product Form", "Task Forms", "Order Tasks", "Product Tasks", "Workflow Steps", "RAID Log", "Change Log"]) {
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[]]), name);
-  }
-
-  return Buffer.from(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -526,46 +387,11 @@ Return this exact JSON:
     console.error("[interview/generate] session insert threw:", err);
   }
 
-  // ── Step 5: Generate workbook ────────────────────────────────────────────
-  let workbookBase64 = "";
-  let workbookUrl: string | null = null;
-
-  try {
-    const buffer = buildWorkbook(extracted);
-    workbookBase64 = buffer.toString("base64");
-
-    if (sessionId) {
-      // Ensure bucket exists
-      await supabaseServer.storage.createBucket("workbooks", { public: false }).catch(() => {});
-
-      const { error: uploadError } = await supabaseServer.storage
-        .from("workbooks")
-        .upload(`${sessionId}/workbook.xlsx`, buffer, {
-          contentType:
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          upsert: true,
-        });
-
-      if (!uploadError) {
-        const { data: signed } = await supabaseServer.storage
-          .from("workbooks")
-          .createSignedUrl(`${sessionId}/workbook.xlsx`, 60 * 60 * 24);
-        workbookUrl = signed?.signedUrl ?? null;
-      } else {
-        console.error("[interview/generate] storage upload error:", uploadError.message);
-      }
-    }
-  } catch (err) {
-    console.error("[interview/generate] workbook generation threw:", err);
-  }
-
   return NextResponse.json({
     sessionId,
     estimatedHours,
     tier,
     clientName: extracted.clientName,
-    workbookUrl,
-    workbookBase64,
     answers,
     estimateAnswers: extracted.estimateAnswers,
     confidence,
