@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { supabase } from '../../lib/supabase'
 import * as XLSX from 'xlsx'
 
 interface Instance {
@@ -227,9 +228,13 @@ export default function AdfloXtractPage() {
     setExtracting(true)
     setExtractError(null)
     try {
+      const { data: { session: authSession } } = await supabase.auth.getSession()
       const res = await fetch('/api/xtract/extract', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
+        },
         body: JSON.stringify({ instanceId: selectedInstance.id, extractionType }),
       })
       const data = await res.json() as { id?: string; error?: string }

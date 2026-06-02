@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import ProjectTab from "./sessions/[id]/ProjectTab";
+import { useRole } from "../../lib/hooks/useRole";
+import { supabase } from "../../lib/supabase";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -96,9 +98,6 @@ type SrdData = {
     generated_by?: "template" | "ai";
   };
 };
-
-// Team PIN — not stored in DB (internal tool, no auth yet)
-const TEAM_PIN = "1234";
 
 const DEFAULT_LOGIC: Logic = {
   baseHours: 0,
@@ -490,6 +489,7 @@ function getStatusStyle(status: string): React.CSSProperties {
 
 export default function EstimatorPage() {
   const router = useRouter();
+  const { isAdmin, isSales, isImplementation, isLoading: roleLoading, userEmail } = useRole();
   const [screen, setScreen] = useState<Screen>("loading");
   const [questions, setQuestions] = useState<Question[]>([]);
   const [logic, setLogic] = useState<Logic>(DEFAULT_LOGIC);
@@ -503,20 +503,6 @@ export default function EstimatorPage() {
   const [activeTab, setActiveTab] = useState<"questionnaire" | "levers" | "srd" | "project">("questionnaire");
   const [saveStatus, setSaveStatus] = useState<"" | "saving" | "saved">("");
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
-
-  // PIN modal
-  const [pinOpen, setPinOpen] = useState(false);
-  const [pinValue, setPinValue] = useState("");
-  const [pinError, setPinError] = useState("");
-  const [intakeCopied, setIntakeCopied] = useState(false);
-
-  function copyIntakeLink() {
-    const url = window.location.origin + "/intake";
-    navigator.clipboard.writeText(url).then(() => {
-      setIntakeCopied(true);
-      setTimeout(() => setIntakeCopied(false), 2000);
-    }).catch(() => prompt("Copy this link:", url));
-  }
 
   // New session modal
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -564,11 +550,10 @@ export default function EstimatorPage() {
 
   // ── Load questions & logic on mount ──
   useEffect(() => {
-    const init = async () => {
-      const [qRes, lRes] = await Promise.all([
-        fetch("/api/estimator/questions"),
-        fetch("/api/estimator/logic"),
-      ]);
+    Promise.all([
+      fetch("/api/estimator/questions"),
+      fetch("/api/estimator/logic"),
+    ]).then(async ([qRes, lRes]) => {
       if (qRes.ok) {
         const qData: Question[] = await qRes.json();
         setQuestions(qData);
@@ -579,10 +564,20 @@ export default function EstimatorPage() {
         setLogic(lData);
         setLogicEdit(lData);
       }
-      setScreen("role");
-    };
-    init();
+    });
   }, []);
+
+  // ── Route based on role once auth state is resolved ──
+  useEffect(() => {
+    if (roleLoading) return;
+    if (isAdmin || isImplementation || isSales) {
+      loadSessions();
+      setScreen("team-dashboard");
+    } else {
+      router.replace("/login");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roleLoading, isAdmin, isImplementation, isSales]);
 
   // ── Derived values ──
   const est = useMemo(() => calcEstimate(questions, answers, logic), [questions, answers, logic]);
@@ -599,9 +594,13 @@ export default function EstimatorPage() {
   const topLevers = levers.filter((q) => !activatedLevers.includes(q.id)).slice(0, 4);
 
   const filteredSessions = useMemo(() => {
+    let result = sessions;
+    if (isSales && userEmail) {
+      result = result.filter((s) => s.primary_contact === userEmail);
+    }
     const q = sessionSearch.toLowerCase();
-    return sessions.filter((s) => (s.company_name || "").toLowerCase().includes(q));
-  }, [sessions, sessionSearch]);
+    return result.filter((s) => (s.company_name || "").toLowerCase().includes(q));
+  }, [sessions, sessionSearch, isSales, userEmail]);
 
   const implCategoryOptions = useMemo(() =>
     [...new Set(questionsEdit.map((q) => q.impl_category).filter((c): c is string => c !== null))].sort(),
@@ -674,9 +673,13 @@ export default function EstimatorPage() {
     if (!newSessionName.trim()) { setNewSessionError("Please enter a client name."); return; }
     setNewSessionSaving(true);
     try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
       const res = await fetch("/api/estimator/sessions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
+        },
         body: JSON.stringify({
           company_name:     newSessionName.trim(),
           primary_contact:  newSessionRep.trim() || null,
@@ -722,16 +725,6 @@ export default function EstimatorPage() {
     setScreen("complete");
   };
 
-  // ── PIN ──
-  const verifyPin = () => {
-    if (pinValue === TEAM_PIN) {
-      setPinOpen(false); setPinValue(""); setPinError("");
-      loadSessions(); loadHistory();
-      setScreen("team-dashboard");
-    } else {
-      setPinError("Incorrect PIN");
-    }
-  };
 // ── Question management ──
 const addQuestion = () => {
   setQuestionsEdit((prev) => {
@@ -901,9 +894,13 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
     setSrdError(null);
     await persistSession();
     try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
       const res = await fetch("/api/estimator/generate-srd", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
+        },
         body: JSON.stringify({ sessionId: currentSession.id }),
       });
       const data = await res.json();
@@ -986,7 +983,7 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
         status:           "draft",
       }),
     });
-    if (!res.ok) { setScreen("role"); return; }
+    if (!res.ok) { setScreen("team-dashboard"); return; }
     const data: Session = await res.json();
     setCurrentSession(data);
     setAnswers({});
@@ -1008,67 +1005,6 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
       <div style={{ minHeight: "60vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14 }}>
         <div style={spinnerStyle} />
         <div style={{ fontSize: 13, color: "#627286" }}>Loading…</div>
-      </div>
-    );
-  }
-
-  // ── Role selection ──
-  if (screen === "role") {
-    return (
-      <div style={{ minHeight: "70vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px" }}>
-        <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "#0f1623", marginBottom: 8 }}>
-          adflo<span style={{ color: "#2f6fed" }}>Estimate</span>
-        </div>
-        <div style={{ fontSize: 15, color: "#627286", marginBottom: 40 }}>Select your role to continue</div>
-        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start" }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-            <RoleCard icon="📋" title="Client / Sales" desc="Answer the onboarding questionnaire to help us understand your needs." onClick={startClientFlow} />
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); copyIntakeLink(); }}
-              style={{
-                width: "100%",
-                padding: "9px 16px",
-                borderRadius: 10,
-                border: "1px solid #cddcff",
-                background: intakeCopied ? "#edf8f2" : "#eaf1ff",
-                color: intakeCopied ? "#1f9d55" : "#2f6fed",
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                transition: "all 0.15s",
-              }}
-            >
-              {intakeCopied ? "✓ Link copied!" : "🔗 Share Intake Link"}
-            </button>
-          </div>
-          <RoleCard icon="🔧" title="Implementation Team" desc="View estimates, sessions, and logic settings." onClick={() => { setPinOpen(true); setPinValue(""); setPinError(""); }} />
-        </div>
-
-        {/* PIN Modal */}
-        {pinOpen && (
-          <ModalOverlay onClose={() => setPinOpen(false)}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "#0f1623", marginBottom: 6 }}>Implementation Team</div>
-              <div style={{ fontSize: 13, color: "#627286", marginBottom: 20 }}>Enter your team PIN to continue</div>
-              <input
-                type="password"
-                value={pinValue}
-                onChange={(e) => setPinValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && verifyPin()}
-                placeholder="····"
-                autoFocus
-                style={{ width: "100%", background: "#f8fafc", border: "1px solid #dde5ef", borderRadius: 14, fontSize: 22, letterSpacing: 6, textAlign: "center", padding: "14px", outline: "none", marginBottom: 8, fontFamily: "inherit", color: "#0f1623" }}
-              />
-              {pinError && <div style={{ color: "#dc2626", fontSize: 12, marginBottom: 10 }}>{pinError}</div>}
-              <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 8 }}>
-                <button onClick={() => setPinOpen(false)} style={outlineBtnStyle}>Cancel</button>
-                <button onClick={verifyPin} style={primaryBtnStyle}>Continue →</button>
-              </div>
-            </div>
-          </ModalOverlay>
-        )}
       </div>
     );
   }
@@ -1159,7 +1095,7 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
 
           <div style={{ marginTop: 8, display: "flex", gap: 12 }}>
             <button onClick={submitClient} style={primaryBtnStyle}>Submit →</button>
-            <button onClick={() => { setScreen("role"); setAnswers({}); }} style={outlineBtnStyle}>← Back</button>
+            <button onClick={() => { setScreen("team-dashboard"); setAnswers({}); }} style={outlineBtnStyle}>← Back</button>
           </div>
         </div>
       </div>
@@ -1179,7 +1115,7 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
           <div style={{ ...getTierStyle(currentTier.name), justifyContent: "center", marginBottom: 28, fontSize: 14, padding: "10px 22px" }}>
             ● {currentTier.name} Implementation · {currentTier.timeline}
           </div>
-          <button onClick={() => setScreen("role")} style={outlineBtnStyle}>← Start Over</button>
+          <button onClick={() => setScreen("team-dashboard")} style={outlineBtnStyle}>← Back to Sessions</button>
         </div>
       </div>
     );
@@ -1195,19 +1131,17 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
         {/* Header */}
         <div style={{ marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em", color: "#0f1623" }}>Implementation Team</h1>
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em", color: "#0f1623" }}>adfloEstimate</h1>
             <p style={{ marginTop: 6, color: "#627286", fontSize: 14, margin: "6px 0 0" }}>Manage sessions, history, and logic settings.</p>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <span style={{ fontSize: 12, fontWeight: 700, background: "#eaf1ff", color: "#2f6fed", padding: "5px 12px", borderRadius: 999, border: "1px solid #cddcff" }}>🔧 Implementation Team</span>
-            <button onClick={() => setScreen("role")} style={outlineBtnStyle}>← Exit</button>
-            <button onClick={() => { setNewSessionOpen(true); setNewSessionName(""); setNewSessionRep(""); setNewSessionError(""); }} style={primaryBtnStyle}>+ New Session</button>
+            <button onClick={() => { setNewSessionOpen(true); setNewSessionName(""); setNewSessionRep(isSales ? (userEmail ?? "") : ""); setNewSessionError(""); }} style={primaryBtnStyle}>+ New Session</button>
           </div>
         </div>
 
         {/* Tabs */}
         <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
-          {(["sessions", "history", "logic"] as const).map((t) => (
+          {(["sessions", "history", "logic"] as const).filter((t) => !isSales || t === "sessions").map((t) => (
             <button key={t} onClick={() => { setDashTab(t); if (t === "history") loadHistory(); if (t === "logic") setLogicEdit(logic); }} style={{ ...tabStyle, ...(dashTab === t ? activeTabStyle : {}) }}>
               {t === "sessions" ? "📋 Sessions" : t === "history" ? "📊 History" : "⚙️ Logic Editor"}
             </button>
@@ -1320,7 +1254,12 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
 
         {/* Logic editor tab */}
         {dashTab === "logic" && (
-          <div style={{ display: "grid", gap: 18 }}>
+          <div style={{ display: "grid", gap: 18, position: "relative", pointerEvents: isImplementation ? "none" : "auto", opacity: isImplementation ? 0.65 : 1 }}>
+            {isImplementation && (
+              <div style={{ padding: "12px 16px", background: "#fff8e8", border: "1px solid #f3e0a3", borderRadius: 12, fontSize: 13, color: "#8a6417", fontWeight: 600 }}>
+                ⚠️ Logic settings are read-only for your role. Contact an admin to make changes.
+              </div>
+            )}
 
             {/* ── Accuracy Review ── */}
             <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: 20 }}>

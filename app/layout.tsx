@@ -4,16 +4,39 @@ import "./globals.css";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useRole } from "../lib/hooks/useRole";
+import { supabase } from "../lib/supabase";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+  const { role, isAdmin, isSales, userEmail, displayName, mustChangePassword, userId } = useRole();
+  console.log("[layout] role:", role, "isAdmin:", isAdmin);
 
   const isPublicPage =
     pathname?.startsWith("/q") ||
     pathname?.startsWith("/intake") ||
-    pathname?.startsWith("/interview");
+    pathname?.startsWith("/interview") ||
+    pathname?.startsWith("/login");
+
+  async function signOut() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      await fetch("/api/audit/event", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ eventType: "logout" }),
+      }).catch(() => {});
+    }
+    await supabase.auth.signOut();
+    document.cookie = "adfl-session=; path=/; max-age=0; SameSite=Lax";
+    router.push("/login");
+  }
 
   return (
     <html lang="en">
@@ -127,27 +150,94 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   <NavItem href="/" label="Home" collapsed={collapsed} icon="🏠" pathname={pathname} exact />
   <NavSection label="Tools" collapsed={collapsed} />
   <NavItem href="/estimator" label="adfloEstimate" collapsed={collapsed} icon="📋" pathname={pathname} exact />
-  <NavItem href="/adfloxtract" label="adfloXtract" collapsed={collapsed} icon="🔁" pathname={pathname} />
-  <NavItem href="/migration" label="adfloMigrate" collapsed={collapsed} icon="↔️" pathname={pathname} />
+  {!isSales && <NavItem href="/adfloxtract" label="adfloXtract" collapsed={collapsed} icon="🔁" pathname={pathname} />}
+  {!isSales && <NavItem href="/migration" label="adfloMigrate" collapsed={collapsed} icon="↔️" pathname={pathname} />}
   <NavItem href="/interview" label="adfloInterview" collapsed={collapsed} icon="💬" pathname={pathname} />
   <NavSection label="Settings" collapsed={collapsed} />
-  <NavItem href="/admin" label="Admin" collapsed={collapsed} icon="⚙️" pathname={pathname} />
-  <NavItem href="/instances" label="Instances" collapsed={collapsed} icon="🖥️" pathname={pathname} />
+  {isAdmin && <NavItem href="/admin" label="Admin" collapsed={collapsed} icon="⚙️" pathname={pathname} />}
+  {!isSales && <NavItem href="/instances" label="Instances" collapsed={collapsed} icon="🖥️" pathname={pathname} />}
 </nav>
-            {/* Footer */}
-            {!collapsed && (
-              <div
-                style={{
-                  padding: "14px 20px",
-                  borderTop: "1px solid rgba(255,255,255,0.07)",
-                  fontSize: 11,
-                  color: "rgba(255,255,255,0.25)",
-                  letterSpacing: "0.02em",
-                }}
-              >
-                AdFlo Tools · Internal
-              </div>
-            )}
+            {/* Footer / Sign out */}
+            <div
+              style={{
+                padding: collapsed ? "12px 10px" : "12px 14px",
+                borderTop: "1px solid rgba(255,255,255,0.07)",
+                flexShrink: 0,
+              }}
+            >
+              {collapsed ? (
+                <button
+                  type="button"
+                  onClick={signOut}
+                  title="Sign out"
+                  style={{
+                    width: "100%",
+                    padding: "8px 0",
+                    background: "transparent",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 8,
+                    color: "rgba(255,255,255,0.4)",
+                    cursor: "pointer",
+                    fontSize: 14,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  ↩
+                </button>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {(displayName || userEmail) && (
+                    <Link
+                      href="/admin"
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 2,
+                        textDecoration: "none",
+                        padding: "6px 8px",
+                        borderRadius: 8,
+                        transition: "background 0.15s",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      {displayName && (
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.7)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {displayName}
+                        </span>
+                      )}
+                      {userEmail && (
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {userEmail}
+                        </span>
+                      )}
+                    </Link>
+                  )}
+                  <button
+                    type="button"
+                    onClick={signOut}
+                    style={{
+                      padding: "7px 12px",
+                      background: "rgba(255,255,255,0.05)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 8,
+                      color: "rgba(255,255,255,0.5)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontFamily: "inherit",
+                      textAlign: "left",
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.1)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
+                  >
+                    ↩ Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           </aside>
 
           {/* Main content */}
@@ -178,6 +268,29 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               <Breadcrumb pathname={pathname} />
             </div>
 
+            {mustChangePassword && (
+              <div
+                style={{
+                  background: "#fffbeb",
+                  borderBottom: "1px solid #fcd34d",
+                  padding: "10px 28px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  fontSize: 13,
+                  color: "#92400e",
+                  flexShrink: 0,
+                }}
+              >
+                <span>⚠️ You are using a temporary password.</span>
+                <Link
+                  href={`/admin?user=${userId}`}
+                  style={{ color: "#b45309", fontWeight: 600, textDecoration: "underline" }}
+                >
+                  Change it now
+                </Link>
+              </div>
+            )}
             <div style={{ flex: 1, padding: "28px 28px" }}>
               {children}
             </div>

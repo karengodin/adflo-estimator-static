@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
+import { logEvent, tryGetActor } from "../../../../lib/audit";
 
 function toSlug(name: string): string {
   return name
@@ -125,6 +126,16 @@ export async function POST(req: NextRequest) {
     console.error("[estimator/sessions] POST error:", error?.message);
     return NextResponse.json({ error: error?.message ?? "Insert failed" }, { status: 500 });
   }
+
+  const actor = await tryGetActor(req);
+  logEvent({
+    ...actor,
+    eventType: "session_created",
+    resourceType: "session",
+    resourceId: (data as DbSession).id,
+    resourceName: clientName,
+    metadata: { tier: body.tier, estimated_hours: body.estimated_hours },
+  }).catch(() => {});
 
   return NextResponse.json(toUi(data as DbSession), { status: 201 });
 }

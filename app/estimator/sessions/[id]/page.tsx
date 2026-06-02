@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import ProjectTab from "./ProjectTab";
+import { useRole } from "../../../../lib/hooks/useRole";
 
 type SessionRow = {
   id: string;
@@ -33,6 +34,7 @@ type Question = {
 export default function SessionDetailPage() {
   const params = useParams<{ id: string }>();
   const sessionId = params?.id;
+  const { isSales } = useRole();
 
   const [session, setSession] = useState<SessionRow | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -212,7 +214,7 @@ const sowItems = useMemo(() => {
 
       {/* Tab bar */}
       <div style={{ display: "flex", gap: 2, borderBottom: "2px solid #edf2f7", marginBottom: 24 }}>
-        {(["session", "project"] as const).map((tab) => (
+        {(["session", "project"] as const).filter((tab) => !isSales || tab === "session").map((tab) => (
           <button
             key={tab}
             type="button"
@@ -237,8 +239,8 @@ const sowItems = useMemo(() => {
         ))}
       </div>
 
-      {/* Project tab */}
-      {activeTab === "project" && (
+      {/* Project tab — hidden for Sales role */}
+      {activeTab === "project" && !isSales && (
         <ProjectTab sessionId={session.id} estimatedHours={session.estimated_hours} />
       )}
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { supabase } from "../../../../lib/supabase";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -338,9 +339,13 @@ export default function ProjectTab({
     setWorkbookGenerating(true);
     console.log("[generateWorkbook] assignedIMs being sent:", assignedIMs);
     try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
       const res = await fetch(`/api/estimator/projects/${project.id}/workbook`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
+        },
         body: JSON.stringify({ assignedIMs }),
       });
       if (res.ok) {

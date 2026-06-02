@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, Suspense } from "react";
+import { supabase } from "../../lib/supabase";
 import { useSearchParams } from "next/navigation";
 
 interface Message {
@@ -152,9 +153,13 @@ function InterviewContent() {
     setGenerating(true);
     setError(null);
     try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
       const res = await fetch("/api/interview/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
+        },
         body: JSON.stringify({
           messages: messages.map((m) => ({ role: m.role, content: m.content })),
           sessionId: sessionIdParam ?? undefined,

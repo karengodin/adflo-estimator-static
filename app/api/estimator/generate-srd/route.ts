@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 import Anthropic from "@anthropic-ai/sdk";
+import { logEvent, tryGetActor } from "../../../../lib/audit";
 
 export async function POST(req: NextRequest) {
   const { sessionId } = await req.json() as { sessionId: string };
@@ -151,6 +152,18 @@ Return this exact JSON shape:
       { status: 500 }
     );
   }
+
+  const actor = await tryGetActor(req);
+  console.log("[generate-srd] logging audit event srd_generated for session", sessionId, "actor:", actor);
+  await logEvent({
+    ...actor,
+    eventType: "srd_generated",
+    resourceType: "session",
+    resourceId: sessionId,
+    resourceName: session.client_name,
+    metadata: { tier: session.tier, estimated_hours: session.estimated_hours },
+  });
+  console.log("[generate-srd] audit event logged");
 
   return NextResponse.json({
     ...srd,

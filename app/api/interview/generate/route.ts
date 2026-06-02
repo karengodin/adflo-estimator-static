@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
+import { logEvent, tryGetActor } from "../../../../lib/audit";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -385,6 +386,18 @@ Return this exact JSON:
     }
   } catch (err) {
     console.error("[interview/generate] session insert threw:", err);
+  }
+
+  if (sessionId) {
+    const actor = await tryGetActor(req);
+    logEvent({
+      ...actor,
+      eventType: "interview_completed",
+      resourceType: "session",
+      resourceId: sessionId,
+      resourceName: extracted.clientName || "Unknown Client",
+      metadata: { tier, estimated_hours: estimatedHours, confidence: confidence.level },
+    }).catch(() => {});
   }
 
   return NextResponse.json({

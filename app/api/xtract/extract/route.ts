@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 import { decryptText } from "../../../../lib/crypto";
+import { logEvent, tryGetActor } from "../../../../lib/audit";
 
 const UI_TYPE_TO_ENTITY: Record<string, string> = {
   lookups:         "lookup_type",
@@ -389,6 +390,16 @@ export async function POST(req: NextRequest) {
     if (insertError || !inserted) {
       return NextResponse.json({ error: `Failed to save extraction: ${insertError?.message ?? "unknown"}` }, { status: 500 });
     }
+
+    const actor = await tryGetActor(req);
+    logEvent({
+      ...actor,
+      eventType: "extraction_run",
+      resourceType: "extraction",
+      resourceId: inserted.id as string,
+      resourceName: instance.name as string,
+      metadata: { extraction_type: extractionType, record_count: items.length },
+    }).catch(() => {});
 
     return NextResponse.json({
       id:            inserted.id,

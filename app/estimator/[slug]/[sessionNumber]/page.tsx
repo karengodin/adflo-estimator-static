@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import ProjectTab from "../../sessions/[id]/ProjectTab";
+import { supabase } from "../../../lib/supabase";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -608,9 +609,13 @@ export default function SessionPage() {
     setSrdError(null);
     await persistSession();
     try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
       const res = await fetch("/api/estimator/generate-srd", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
+        },
         body: JSON.stringify({ sessionId: currentSession.id }),
       });
       const data = await res.json();
