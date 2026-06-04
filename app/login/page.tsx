@@ -4,30 +4,62 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "11px 14px",
-  borderRadius: 10,
-  border: "1px solid #d8e1ec",
-  fontSize: 14,
-  fontFamily: "inherit",
-  boxSizing: "border-box",
-  outline: "none",
-  color: "#0f1623",
-  background: "#fff",
-};
+function DarkInput({
+  type,
+  value,
+  onChange,
+  onKeyDown,
+  placeholder,
+  autoFocus,
+}: {
+  type: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <input
+      type={type}
+      value={value}
+      onChange={onChange}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}
+      autoFocus={autoFocus}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      style={{
+        width: "100%",
+        padding: "11px 14px",
+        borderRadius: 10,
+        border: `1px solid ${focused ? "#3b82f6" : "#1f2937"}`,
+        fontSize: 14,
+        fontFamily: "inherit",
+        boxSizing: "border-box",
+        outline: "none",
+        color: "#f9fafb",
+        background: "#0d1117",
+        boxShadow: focused ? "0 0 0 3px rgba(59,130,246,0.18)" : "none",
+        transition: "border-color 0.15s, box-shadow 0.15s",
+      }}
+    />
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
+
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [error, setError]       = useState("");
   const [loading, setLoading]   = useState(false);
 
-  const [view, setView] = useState<"login" | "forgot" | "forgot-sent">("login");
+  const [view, setView]             = useState<"login" | "forgot" | "forgot-sent">("login");
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
-  const [resetError, setResetError]   = useState("");
+  const [resetError, setResetError]     = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -84,29 +116,83 @@ export default function LoginPage() {
   }
 
   const logo = (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 36 }}>
-      <div
-        style={{
-          width: 36,
-          height: 36,
-          background: "linear-gradient(135deg, #2f6fed, #4fbf9f)",
-          borderRadius: 10,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 15,
-          fontWeight: 800,
-          color: "#fff",
-          letterSpacing: "-0.04em",
-          flexShrink: 0,
-        }}
-      >
-        af
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, marginBottom: 32 }}>
+      <img
+        src="/adflologo.svg"
+        alt="AdFlo"
+        style={{ width: 64, height: 64, borderRadius: 14, display: "block" }}
+      />
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: "#f9fafb", letterSpacing: "-0.02em" }}>
+          AdFlo Tools
+        </div>
+        <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>
+          Implementation Platform
+        </div>
       </div>
-      <span style={{ fontSize: 18, fontWeight: 700, color: "#0f1623", letterSpacing: "-0.02em" }}>
-        AdFlo Tools
-      </span>
     </div>
+  );
+
+  const errorBox = (msg: string) => (
+    <div
+      style={{
+        marginTop: 14,
+        padding: "10px 14px",
+        borderRadius: 10,
+        background: "rgba(239,68,68,0.1)",
+        border: "1px solid rgba(239,68,68,0.3)",
+        color: "#f87171",
+        fontSize: 13,
+      }}
+    >
+      {msg}
+    </div>
+  );
+
+  const primaryBtn = (label: string, onClick: () => void, disabled: boolean) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        marginTop: 20,
+        width: "100%",
+        padding: "12px",
+        borderRadius: 12,
+        background: disabled ? "#1d4ed8" : "#3b82f6",
+        color: "#fff",
+        border: "none",
+        fontSize: 15,
+        fontWeight: 700,
+        cursor: disabled ? "not-allowed" : "pointer",
+        fontFamily: "inherit",
+        opacity: disabled ? 0.5 : 1,
+        transition: "opacity 0.15s, background 0.15s",
+      }}
+      onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLButtonElement).style.background = "#2563eb"; }}
+      onMouseLeave={(e) => { if (!disabled) (e.currentTarget as HTMLButtonElement).style.background = "#3b82f6"; }}
+    >
+      {label}
+    </button>
+  );
+
+  const ghostBtn = (label: string, onClick: () => void, color = "#6b7280") => (
+    <button
+      onClick={onClick}
+      style={{
+        background: "none",
+        border: "none",
+        color,
+        fontSize: 13,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        padding: 0,
+        transition: "color 0.15s",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.color = "#9ca3af")}
+      onMouseLeave={(e) => (e.currentTarget.style.color = color)}
+    >
+      {label}
+    </button>
   );
 
   return (
@@ -116,19 +202,20 @@ export default function LoginPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background:
-          "radial-gradient(circle at top right, rgba(47,111,237,0.07), transparent 40%), linear-gradient(180deg, #f5f7fb 0%, #eef3f8 100%)",
+        background: "#0a0d14",
+        backgroundImage: "radial-gradient(#1a2035 1.5px, transparent 1.5px)",
+        backgroundSize: "22px 22px",
         fontFamily: "'DM Sans', sans-serif",
       }}
     >
       <div
         style={{
-          background: "#fff",
-          border: "1px solid #dde5ef",
+          background: "#111827",
+          border: "1px solid #1f2937",
           borderRadius: 24,
-          padding: "48px 44px",
+          padding: "44px 40px",
           width: 420,
-          boxShadow: "0 8px 40px rgba(16,24,40,0.08)",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
         }}
       >
         {logo}
@@ -136,96 +223,40 @@ export default function LoginPage() {
         {/* ── Sign in ── */}
         {view === "login" && (
           <>
-            <h1 style={{ margin: "0 0 6px", fontSize: 24, fontWeight: 800, color: "#0f1623", letterSpacing: "-0.03em" }}>
-              Sign in
-            </h1>
-            <p style={{ margin: "0 0 28px", fontSize: 14, color: "#627286" }}>
-              Internal tools for the AdFlo team.
-            </p>
-
             <div style={{ display: "grid", gap: 14 }}>
               <div>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#455468", marginBottom: 6 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#9ca3af", marginBottom: 6 }}>
                   Email
                 </label>
-                <input
+                <DarkInput
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && signIn()}
                   placeholder="you@example.com"
                   autoFocus
-                  style={inputStyle}
                 />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#455468", marginBottom: 6 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#9ca3af", marginBottom: 6 }}>
                   Password
                 </label>
-                <input
+                <DarkInput
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && signIn()}
                   placeholder="••••••••"
-                  style={inputStyle}
                 />
               </div>
             </div>
 
-            {error && (
-              <div
-                style={{
-                  marginTop: 14,
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  background: "#fef2f2",
-                  border: "1px solid #fca5a5",
-                  color: "#dc2626",
-                  fontSize: 13,
-                }}
-              >
-                {error}
-              </div>
-            )}
+            {error && errorBox(error)}
 
-            <button
-              onClick={signIn}
-              disabled={loading || !email || !password}
-              style={{
-                marginTop: 20,
-                width: "100%",
-                padding: "12px",
-                borderRadius: 12,
-                background: "linear-gradient(135deg, #2f6fed, #1a4fb5)",
-                color: "#fff",
-                border: "none",
-                fontSize: 15,
-                fontWeight: 700,
-                cursor: loading || !email || !password ? "not-allowed" : "pointer",
-                fontFamily: "inherit",
-                opacity: loading || !email || !password ? 0.65 : 1,
-                transition: "opacity 0.15s",
-              }}
-            >
-              {loading ? "Signing in…" : "Sign in →"}
-            </button>
+            {primaryBtn(loading ? "Signing in…" : "Sign in →", signIn, loading || !email || !password)}
 
             <div style={{ marginTop: 16, textAlign: "center" }}>
-              <button
-                onClick={() => { setResetEmail(email); setResetError(""); setView("forgot"); }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#2f6fed",
-                  fontSize: 13,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  padding: 0,
-                }}
-              >
-                Forgot password?
-              </button>
+              {ghostBtn("Forgot password?", () => { setResetEmail(email); setResetError(""); setView("forgot"); })}
             </div>
           </>
         )}
@@ -233,81 +264,33 @@ export default function LoginPage() {
         {/* ── Forgot password ── */}
         {view === "forgot" && (
           <>
-            <h1 style={{ margin: "0 0 6px", fontSize: 24, fontWeight: 800, color: "#0f1623", letterSpacing: "-0.03em" }}>
-              Reset password
-            </h1>
-            <p style={{ margin: "0 0 28px", fontSize: 14, color: "#627286" }}>
-              Enter your email and we&apos;ll send you a reset link.
-            </p>
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#f9fafb", marginBottom: 6 }}>Reset password</div>
+              <div style={{ fontSize: 13, color: "#6b7280" }}>
+                Enter your email and we&apos;ll send you a reset link.
+              </div>
+            </div>
 
             <div>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#455468", marginBottom: 6 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#9ca3af", marginBottom: 6 }}>
                 Email
               </label>
-              <input
+              <DarkInput
                 type="email"
                 value={resetEmail}
                 onChange={(e) => setResetEmail(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendResetLink()}
                 placeholder="you@example.com"
                 autoFocus
-                style={inputStyle}
               />
             </div>
 
-            {resetError && (
-              <div
-                style={{
-                  marginTop: 14,
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  background: "#fef2f2",
-                  border: "1px solid #fca5a5",
-                  color: "#dc2626",
-                  fontSize: 13,
-                }}
-              >
-                {resetError}
-              </div>
-            )}
+            {resetError && errorBox(resetError)}
 
-            <button
-              onClick={sendResetLink}
-              disabled={resetLoading || !resetEmail.trim()}
-              style={{
-                marginTop: 20,
-                width: "100%",
-                padding: "12px",
-                borderRadius: 12,
-                background: "linear-gradient(135deg, #2f6fed, #1a4fb5)",
-                color: "#fff",
-                border: "none",
-                fontSize: 15,
-                fontWeight: 700,
-                cursor: resetLoading || !resetEmail.trim() ? "not-allowed" : "pointer",
-                fontFamily: "inherit",
-                opacity: resetLoading || !resetEmail.trim() ? 0.65 : 1,
-                transition: "opacity 0.15s",
-              }}
-            >
-              {resetLoading ? "Sending…" : "Send reset link →"}
-            </button>
+            {primaryBtn(resetLoading ? "Sending…" : "Send reset link →", sendResetLink, resetLoading || !resetEmail.trim())}
 
             <div style={{ marginTop: 16, textAlign: "center" }}>
-              <button
-                onClick={() => setView("login")}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#627286",
-                  fontSize: 13,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  padding: 0,
-                }}
-              >
-                ← Back to sign in
-              </button>
+              {ghostBtn("← Back to sign in", () => setView("login"))}
             </div>
           </>
         )}
@@ -315,26 +298,23 @@ export default function LoginPage() {
         {/* ── Sent confirmation ── */}
         {view === "forgot-sent" && (
           <>
-            <h1 style={{ margin: "0 0 12px", fontSize: 24, fontWeight: 800, color: "#0f1623", letterSpacing: "-0.03em" }}>
-              Check your email
-            </h1>
-            <p style={{ margin: "0 0 24px", fontSize: 14, color: "#627286" }}>
-              We sent a password reset link to <strong>{resetEmail}</strong>. Click the link in that email to set a new password.
-            </p>
-            <button
-              onClick={() => setView("login")}
+            <div
               style={{
-                background: "none",
-                border: "none",
-                color: "#2f6fed",
-                fontSize: 13,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                padding: 0,
+                padding: "16px",
+                borderRadius: 12,
+                background: "rgba(59,130,246,0.08)",
+                border: "1px solid rgba(59,130,246,0.2)",
+                marginBottom: 20,
               }}
             >
-              ← Back to sign in
-            </button>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#f9fafb", marginBottom: 6 }}>
+                Check your email
+              </div>
+              <div style={{ fontSize: 13, color: "#9ca3af", lineHeight: 1.5 }}>
+                We sent a reset link to <strong style={{ color: "#f9fafb" }}>{resetEmail}</strong>. Click the link to set a new password.
+              </div>
+            </div>
+            {ghostBtn("← Back to sign in", () => setView("login"), "#3b82f6")}
           </>
         )}
       </div>
