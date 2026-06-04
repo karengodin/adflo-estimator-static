@@ -51,11 +51,13 @@ export async function PATCH(
   }
 
   if (body.password !== undefined) {
-    const { error } = await supabaseServer.auth.admin.updateUserById(id, {
+    console.log("[admin/users PATCH] setting password for id:", id);
+    const { data: pwData, error: pwError } = await supabaseServer.auth.admin.updateUserById(id, {
       password: body.password,
       user_metadata: { must_change_password: true },
     });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    console.log("[admin/users PATCH] updateUserById result:", { userId: pwData?.user?.id ?? null, error: pwError });
+    if (pwError) return NextResponse.json({ error: pwError.message }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });
