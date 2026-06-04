@@ -31,24 +31,25 @@ export async function POST(req: NextRequest) {
   const check = await requireAdmin(req);
   if (check instanceof NextResponse) return check;
 
-  const { display_name, email, role } = await req.json() as {
+  const { display_name, email, role, password } = await req.json() as {
     display_name: string;
     email: string;
     role: string;
+    password: string;
   };
 
-  if (!email?.trim()) {
-    return NextResponse.json({ error: "email required" }, { status: 400 });
-  }
+  if (!email?.trim()) return NextResponse.json({ error: "email required" }, { status: 400 });
+  if (!password?.trim()) return NextResponse.json({ error: "password required" }, { status: 400 });
 
-  console.log("[admin/users POST] inviting user:", { email: email.trim(), role });
-  const { data, error } = await supabaseServer.auth.admin.inviteUserByEmail(email.trim(), {
-    data: { display_name: display_name?.trim() || null },
+  const { data, error } = await supabaseServer.auth.admin.createUser({
+    email: email.trim(),
+    password: password.trim(),
+    email_confirm: true,
+    user_metadata: { display_name: display_name?.trim() || null, must_change_password: true },
   });
-  console.log("[admin/users POST] inviteUserByEmail response:", { userId: data?.user?.id ?? null, error });
 
   if (error || !data.user) {
-    return NextResponse.json({ error: error?.message ?? "Failed to invite user" }, { status: 500 });
+    return NextResponse.json({ error: error?.message ?? "Failed to create user" }, { status: 500 });
   }
 
   const newUserId = data.user.id;
