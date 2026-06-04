@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabase";
 
-export type AppRole = "admin" | "implementation" | "sales";
+export type AppRole = "admin" | "implementation" | "sales" | "user";
 
 export interface UseRoleResult {
   role: AppRole | null;
@@ -39,11 +39,14 @@ export function useRole(): UseRoleResult {
         setMustChangePassword(session.user.user_metadata?.must_change_password === true);
 
         const [roleRes, profileRes] = await Promise.all([
-          supabase.from("user_roles").select("role").eq("user_id", session.user.id).single(),
+          supabase.from("user_roles").select("role").eq("user_id", session.user.id),
           supabase.from("profiles").select("display_name").eq("id", session.user.id).single(),
         ]);
 
-        const resolvedRole = (roleRes.data?.role as AppRole) ?? null;
+        const rows = (roleRes.data ?? []) as { role: string }[];
+        const PRIORITY: AppRole[] = ["admin", "implementation", "sales", "user"];
+        const resolvedRole: AppRole | null =
+          PRIORITY.find((r) => rows.some((row) => row.role === r)) ?? null;
         setRole(resolvedRole);
         setDisplayName(profileRes.data?.display_name ?? null);
 
@@ -63,7 +66,7 @@ export function useRole(): UseRoleResult {
     role,
     isAdmin: role === "admin",
     isImplementation: role === "implementation",
-    isSales: role === "sales",
+    isSales: role === "sales" || role === "user",
     isLoading,
     userId,
     userEmail,
