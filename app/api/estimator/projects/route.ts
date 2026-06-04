@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
     // Fetch session + questions + logic settings
     const [sessionRes, questionsRes, logicRes] = await Promise.all([
-      supabaseServer.from("sessions").select("answers, tier").eq("id", sessionId).single(),
+      supabaseServer.from("sessions").select("answers, tier, estimated_hours").eq("id", sessionId).single(),
       supabaseServer.from("questions").select("id, impl_category, weight, question_type, is_risk_multiplier, risk_multiplier_value, sort_order").eq("active", true),
       supabaseServer.from("logic_settings").select("product_hour_rate, connector_hour_rate, risk_multipliers").eq("id", "global").single(),
     ]);
@@ -41,10 +41,11 @@ export async function POST(req: NextRequest) {
     }>;
     const logicSettings = logicRes.data ?? {};
 
-    // Compute per-category and total hours using shared server-side calc
+    // Use the stored estimate as the base so the project matches what the IM saw.
+    // Still run calcEstimate to get the per-category breakdown for distribution.
     const breakdown       = calcEstimateFromAnswers(answers, questions, logicSettings);
     const hoursByCategory = breakdownToHoursByCategory(breakdown);
-    const totalHours      = breakdown.total;
+    const totalHours      = (sessionData?.estimated_hours as number | null) ?? breakdown.total;
 
     // Compute phase→category estimated hours
     const distribution = distributeHours(hoursByCategory, totalHours);

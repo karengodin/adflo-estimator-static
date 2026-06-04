@@ -19,7 +19,7 @@ export async function PATCH(
 
   // Fetch everything needed in parallel
   const [sessionRes, questionsRes, phasesRes, summaryRes, logicRes] = await Promise.all([
-    supabaseServer.from("sessions").select("answers").eq("id", project.session_id).single(),
+    supabaseServer.from("sessions").select("answers, estimated_hours").eq("id", project.session_id).single(),
     supabaseServer.from("questions").select("id, impl_category, weight, question_type, is_risk_multiplier, risk_multiplier_value, sort_order").eq("active", true),
     supabaseServer.from("implementation_phases").select("id, phase_name").eq("project_id", id),
     supabaseServer.from("hours_summary").select("id, phase_id, category").eq("project_id", id),
@@ -34,10 +34,11 @@ export async function PATCH(
   }>;
   const logicSettings = logicRes.data ?? {};
 
-  const breakdown      = calcEstimateFromAnswers(answers, questions, logicSettings);
+  // Use the stored estimate as the base; recalculate per-category breakdown for distribution only.
+  const breakdown       = calcEstimateFromAnswers(answers, questions, logicSettings);
   const hoursByCategory = breakdownToHoursByCategory(breakdown);
-  const totalHours      = breakdown.total;
-  const distribution   = distributeHours(hoursByCategory, totalHours);
+  const totalHours      = (sessionRes.data?.estimated_hours as number | null) ?? breakdown.total;
+  const distribution    = distributeHours(hoursByCategory, totalHours);
 
   // Build lookup maps
   const phaseIdByName: Record<string, string> = {};
@@ -72,13 +73,7 @@ export async function PATCH(
       }
     }
   }
-  await Promise.all([
-    ...updates,
-    supabaseServer
-      .from("sessions")
-      .update({ estimated_hours: totalHours })
-      .eq("id", project.session_id),
-  ]);
+  await Promise.all(updates);
 
   // Return refreshed hours_summary + the new session base hours
   const { data: refreshed } = await supabaseServer
@@ -86,5 +81,5 @@ export async function PATCH(
     .select("*")
     .eq("project_id", id);
 
-  return NextResponse.json({ summary: refreshed ?? [], sessionHours: totalHours });
+  return NextResponse.json({ summary: refreshed ?? [], sessionHours: totalHours, baseHours: sessionRes.data?.estimated_hours ?? totalHours });
 }

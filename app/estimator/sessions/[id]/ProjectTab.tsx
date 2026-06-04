@@ -483,7 +483,7 @@ export default function ProjectTab({
             label="Estimated Hours"
             value={`${totalEst}`}
             sub={overheadHrs > 0
-              ? `hrs — includes ~${overheadHrs} hrs overhead (QA, PM, documentation)`
+              ? `hrs · Base: ${currentSessionHours} hrs · Overhead: +${overheadHrs} hrs`
               : "hrs"}
           />
           <OverviewStat label="Actual Hours" value={`${totalAct}`} sub="hrs" />
