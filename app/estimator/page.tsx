@@ -1780,20 +1780,20 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
                           <div>
                             <div style={{ fontSize: 14, color: "#0f1623", lineHeight: 1.55, fontWeight: 500 }}>{q.question}</div>
                             <div style={{ fontSize: 11, color: "#8a9bb0", marginTop: 5, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                              {q.weight > 0 && <span>{q.weight} hrs</span>}
-                              {q.is_risk_multiplier && a === "Yes" && (
+                              {!isSales && q.weight > 0 && <span>{q.weight} hrs</span>}
+                              {!isSales && q.is_risk_multiplier && a === "Yes" && (
                                 <span style={{ color: "#1f9d55", fontWeight: 700 }}>✓ no risk</span>
                               )}
-                              {q.is_risk_multiplier && a === "No" && (
+                              {!isSales && q.is_risk_multiplier && a === "No" && (
                                 <span style={{ color: "#b7791f", fontWeight: 700 }}>⚠ risk ×{q.risk_multiplier_value}</span>
                               )}
-                              {q.is_risk_multiplier && a !== "Yes" && a !== "No" && (
+                              {!isSales && q.is_risk_multiplier && a !== "Yes" && a !== "No" && (
                                 <span style={{ color: "#8a9bb0" }}>risk ×{q.risk_multiplier_value}</span>
                               )}
                               {q.question_type === "date" && a && new Date(a) < new Date(Date.now() + 8 * 7 * 24 * 60 * 60 * 1000) && (
                                 <span style={{ color: "#dc2626", fontWeight: 700 }}>⚠ aggressive timeline</span>
                               )}
-                              {triggered && q.weight > 0 && <span style={{ color: "#2f6fed", fontWeight: 700 }}>↑ adds hours</span>}
+                              {!isSales && triggered && q.weight > 0 && <span style={{ color: "#2f6fed", fontWeight: 700 }}>↑ adds hours</span>}
                               {q.blocker && triggered && <span style={{ color: "#dc2626", fontWeight: 700 }}>🔴 Blocker</span>}
                               {q.sow && triggered && <span style={{ color: "#b7791f", fontWeight: 700 }}>📋 SOW</span>}
                               {levered && <span style={{ color: "#1f9d55", fontWeight: 700 }}>✓ Levered out</span>}
