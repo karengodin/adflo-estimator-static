@@ -15,12 +15,12 @@ TIMELINE: When do they need to go live? Any hard deadlines?
 BUSINESS UNITS: Do they have multiple brands, regions, or business units?
 
 CRITICAL DATA POINTS — make sure you collect all of these through natural conversation:
-- Exact number of product forms needed
+- Approximate number of product forms needed (1–5, 6–10, or 11–15)
 - Whether they need flight forms
 - Whether they need financial configuration: margin tracking, COGS, change orders, pacing
 - Exact user count and role breakdown
-- Integration specifics: what systems, how many, push vs pull, complexity
-- Workflow complexity: approval steps, conditional routing, SLA requirements
+- Integration specifics: what systems, how many, and complexity
+- Workflow complexity: approval steps, SLA requirements
 - Whether workflows are documented or need to be discovered
 - Multiple business units: how many, independent or hierarchical
 - Go-live date and whether it's a hard deadline

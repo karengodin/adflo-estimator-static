@@ -33,7 +33,6 @@ export function calcEstimateFromAnswers(
   logicSettings: LogicSettings
 ): EstimateBreakdown {
   const bySort = (n: number) => questions.find((q) => q.sort_order === n);
-  const productHourRate   = logicSettings.product_hour_rate   ?? 4;
   const connectorHourRate = logicSettings.connector_hour_rate ?? 12;
 
   const hours: Record<string, number> = {};
@@ -48,19 +47,13 @@ export function calcEstimateFromAnswers(
     if (answers[String(q.id)] === "Yes") add(q.impl_category, q.weight ?? 0);
   }
 
-  // Product hours → Form Configuration (Q13 = product count, Q14 = flights modifier)
+  // Product hours → Form Configuration (Q13 = product tier)
   const q13 = bySort(13);
-  const q14 = bySort(14);
   if (q13) {
-    const count = parseInt(answers[String(q13.id)] || "0", 10) || 0;
-    if (count > 0) {
-      let p: number;
-      if (count <= 3)      p = count * productHourRate;
-      else if (count <= 8) p = count * (productHourRate * 0.75);
-      else                 p = count * (productHourRate * 0.5);
-      if (q14 && answers[String(q14.id)] === "Yes") p *= 1.5;
-      add("Form Configuration", Math.round(p));
-    }
+    const ans = answers[String(q13.id)];
+    if (ans === "1-5")   add("Form Configuration", 20);
+    else if (ans === "6-10")  add("Form Configuration", 40);
+    else if (ans === "11-15") add("Form Configuration", 60);
   }
 
   // Connector hours → Integration Configuration (Q12 = push connector count)

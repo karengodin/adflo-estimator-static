@@ -52,7 +52,7 @@ interface ExtractedData {
     externalApiIntegration: boolean | null;
     biDirectionalSync: boolean | null;
     pushConnectorCount: number | null;
-    productFormCount: number | null;
+    productFormCount: string | null;
     hasFlightForms: boolean | null;
     hasCustomTaskForms: boolean | null;
     hasBuySheets: boolean | null;
@@ -94,21 +94,14 @@ function computeHours(
     }
   }
 
-  // Product hours: Q13 tiered, × 1.5 if Q14 = "Yes"
+  // Product hours: Q13 tiered (multiplechoice)
   const q13 = bySort(13);
   let products = 0;
   if (q13) {
-    const count = parseInt(answers[String(q13.id)] || "0", 10) || 0;
-    if (count > 0) {
-      const rate = logic.product_hour_rate ?? 4;
-      let p: number;
-      if (count <= 3) p = count * rate;
-      else if (count <= 8) p = count * (rate * 0.75);
-      else p = count * (rate * 0.5);
-      const q14 = bySort(14);
-      if (q14 && answers[String(q14.id)] === "Yes") p *= 1.5;
-      products = Math.round(p);
-    }
+    const ans = answers[String(q13.id)];
+    if (ans === "1-5")        products = 20;
+    else if (ans === "6-10")  products = 40;
+    else if (ans === "11-15") products = 60;
   }
 
   // Connectors: Q12 × connectorHourRate
@@ -165,7 +158,7 @@ function buildAnswers(
   set(10, yn(ea.externalApiIntegration));
   set(11, yn(ea.biDirectionalSync));
   set(12, ea.pushConnectorCount === null ? null : String(ea.pushConnectorCount));
-  set(13, ea.productFormCount === null ? null : String(ea.productFormCount));
+  set(13, ea.productFormCount);
   set(14, yn(ea.hasFlightForms));
   set(15, yn(ea.hasCustomTaskForms));
   set(16, yn(ea.hasBuySheets));
@@ -300,7 +293,7 @@ Return this exact JSON:
     "externalApiIntegration": true if any external system integration mentioned,
     "biDirectionalSync": true if both push AND pull to same system mentioned,
     "pushConnectorCount": number of ad server/vendor connections mentioned or null if not discussed,
-    "productFormCount": number of distinct product forms estimated or null if not discussed,
+    "productFormCount": map product count to tier string: "1-5" for 1–5 products, "6-10" for 6–10, "11-15" for 11 or more — null if not discussed,
     "hasFlightForms": true if flights mentioned at all,
     "hasCustomTaskForms": true if task-specific forms mentioned,
     "hasBuySheets": true if IO exports or buy sheets mentioned,

@@ -24,7 +24,7 @@ type Question = {
   lever_name?: string | null;
   lever_desc?: string | null;
   // v2 fields
-  question_type: "yesno" | "number" | "date";
+  question_type: "yesno" | "number" | "date" | "multiplechoice";
   conditional_logic: {
     type: "any_answered_yes_or_nonzero" | "greater_than";
     sort_orders?: number[];
@@ -1076,6 +1076,16 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
                         <input type="date" value={a} onChange={(e) => setAnswer(q.id, e.target.value)}
                           style={{ padding: "8px 12px", borderRadius: 10, border: "1.5px solid #dde5ef", fontSize: 13, fontFamily: "inherit", outline: "none", background: "#f8fafc" }} />
                       )}
+                      {q.question_type === "multiplechoice" && (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          {[{ val: "1-5", label: "1–5 products" }, { val: "6-10", label: "6–10 products" }, { val: "11-15", label: "11–15 products" }].map(({ val, label }) => (
+                            <button key={val} type="button" onClick={() => setAnswer(q.id, val)}
+                              style={{ padding: "8px 14px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${a === val ? "#1f9d55" : "#dde5ef"}`, background: a === val ? "#1f9d55" : "#f8fafc", color: a === val ? "#fff" : "#627286", transition: "all 0.15s", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       {q.question_type === "yesno" && (
                         <div style={{ display: "flex", gap: 8 }}>
                           {["Yes", "No"].map((opt) => (
@@ -1798,6 +1808,16 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
                             {q.question_type === "date" && (
                               <input type="date" value={a} onChange={(e) => setAnswer(q.id, e.target.value)}
                                 style={{ padding: "8px 12px", borderRadius: 10, border: "1.5px solid #dde5ef", fontSize: 13, fontFamily: "inherit", outline: "none", background: "#f8fafc" }} />
+                            )}
+                            {q.question_type === "multiplechoice" && (
+                              <div style={{ display: "flex", gap: 8 }}>
+                                {[{ val: "1-5", label: "1–5 products" }, { val: "6-10", label: "6–10 products" }, { val: "11-15", label: "11–15 products" }].map(({ val, label }) => (
+                                  <button key={val} type="button" onClick={() => setAnswer(q.id, val)}
+                                    style={{ padding: "8px 14px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${a === val ? "#1f9d55" : "#dde5ef"}`, background: a === val ? "#1f9d55" : "#f8fafc", color: a === val ? "#fff" : "#627286", transition: "all 0.15s", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
                             )}
                             {q.question_type === "yesno" && (
                               <div style={{ display: "flex", gap: 8 }}>

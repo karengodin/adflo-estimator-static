@@ -10,6 +10,7 @@ type DbQuestion = {
   trigger: string;
   weight: number;
   question_type: string;
+  sort_order: number;
 };
 
 const tiers = [
@@ -193,17 +194,26 @@ export async function POST(request: Request) {
     // ── 1. Fetch questions (for estimate + email) ──────────────────────────────
     const { data: questions } = await supabaseServer
       .from("questions")
-      .select("id, cat, q, trigger, weight, question_type")
+      .select("id, cat, q, trigger, weight, question_type, sort_order")
       .eq("active", true)
       .order("sort_order") as { data: DbQuestion[] | null };
 
     // ── 2. Compute estimate ────────────────────────────────────────────────────
     let estimatedHours = 0;
     if (questions) {
+      const bySort = (n: number) => questions.find((q) => q.sort_order === n);
       for (const q of questions) {
         if (q.question_type === "yesno" && safeAnswers[String(q.id)] === "Yes") {
           estimatedHours += q.weight ?? 0;
         }
+      }
+      // Q13: product tier (multiplechoice)
+      const q13 = bySort(13);
+      if (q13) {
+        const ans = safeAnswers[String(q13.id)];
+        if (ans === "1-5")        estimatedHours += 20;
+        else if (ans === "6-10")  estimatedHours += 40;
+        else if (ans === "11-15") estimatedHours += 60;
       }
     }
     const tier = (tiers.find((t) => estimatedHours >= t.min) ?? tiers[tiers.length - 1]).name;
