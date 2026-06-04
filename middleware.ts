@@ -6,10 +6,20 @@ const PUBLIC_PREFIXES = [
   "/q/",
   "/intake",
   "/interview",
+  "/auth/",
   "/api/interview/",
   "/api/estimator/intake/",
   "/_next",
   "/favicon.ico",
+  "/adflologo.svg",
+];
+
+// Routes restricted from the Sales role
+const SALES_BLOCKED_PREFIXES = [
+  "/adfloxtract",
+  "/migration",
+  "/admin",
+  "/instances",
 ];
 
 function isPublic(pathname: string): boolean {
@@ -21,19 +31,28 @@ export function middleware(req: NextRequest) {
 
   if (isPublic(pathname)) return NextResponse.next();
 
-  // API routes not in the public list enforce their own auth (Bearer token).
-  // Let them through here — a 401 from the route is better than a redirect.
+  // API routes enforce their own auth via Bearer token.
   if (pathname.startsWith("/api/")) return NextResponse.next();
 
-  // Check for the session cookie set by the login page after signInWithPassword().
-  // The cookie is a routing signal — actual token validation happens server-side
-  // in lib/adminAuth.ts (admin routes) and client-side via useRole() (UI).
+  // Check session cookie — set by login page after signInWithPassword().
   const sessionCookie = req.cookies.get("adfl-session");
   if (!sessionCookie) {
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = "";
     return NextResponse.redirect(loginUrl);
+  }
+
+  // Role-based route guard for Sales users.
+  const roleCookie = req.cookies.get("adfl-role")?.value;
+  if (roleCookie === "sales") {
+    const isBlocked = SALES_BLOCKED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+    if (isBlocked) {
+      const homeUrl = req.nextUrl.clone();
+      homeUrl.pathname = "/";
+      homeUrl.search = "";
+      return NextResponse.redirect(homeUrl);
+    }
   }
 
   return NextResponse.next();

@@ -43,8 +43,15 @@ export function useRole(): UseRoleResult {
           supabase.from("profiles").select("display_name").eq("id", session.user.id).single(),
         ]);
 
-        setRole((roleRes.data?.role as AppRole) ?? null);
+        const resolvedRole = (roleRes.data?.role as AppRole) ?? null;
+        setRole(resolvedRole);
         setDisplayName(profileRes.data?.display_name ?? null);
+
+        // Write role to a short-lived cookie so middleware can route-guard by role.
+        // This is a UX signal only — real enforcement is server-side.
+        if (resolvedRole) {
+          document.cookie = `adfl-role=${resolvedRole}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
+        }
       } finally {
         setIsLoading(false);
       }

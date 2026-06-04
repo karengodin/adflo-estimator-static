@@ -35,6 +35,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     }
     await supabase.auth.signOut();
     document.cookie = "adfl-session=; path=/; max-age=0; SameSite=Lax";
+    document.cookie = "adfl-role=; path=/; max-age=0; SameSite=Lax";
     router.push("/login");
   }
 
@@ -140,7 +141,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   {!isSales && <NavItem href="/adfloxtract" label="adfloXtract" collapsed={collapsed} icon="🔁" pathname={pathname} />}
   {!isSales && <NavItem href="/migration" label="adfloMigrate" collapsed={collapsed} icon="↔️" pathname={pathname} />}
   <NavItem href="/interview" label="adfloInterview" collapsed={collapsed} icon="💬" pathname={pathname} />
-  <NavSection label="Settings" collapsed={collapsed} />
+  {!isSales && <NavSection label="Settings" collapsed={collapsed} />}
   {isAdmin && <NavItem href="/admin" label="Admin" collapsed={collapsed} icon="⚙️" pathname={pathname} />}
   {!isSales && <NavItem href="/instances" label="Instances" collapsed={collapsed} icon="🖥️" pathname={pathname} />}
 </nav>
@@ -177,7 +178,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {(displayName || userEmail) && (
                     <Link
-                      href="/admin"
+                      href={isAdmin ? "/admin" : "/account"}
                       style={{
                         display: "flex",
                         flexDirection: "column",
