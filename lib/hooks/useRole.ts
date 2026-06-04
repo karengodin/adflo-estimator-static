@@ -18,48 +18,88 @@ export interface UseRoleResult {
   mustChangePassword: boolean;
 }
 
+const PRIORITY: AppRole[] = ["admin", "implementation", "sales", "user"];
+
+function clearRoleCookie() {
+  document.cookie = "adfl-role=; path=/; max-age=0; SameSite=Lax";
+}
+
 export function useRole(): UseRoleResult {
-  const [role, setRole]                         = useState<AppRole | null>(null);
-  const [isLoading, setIsLoading]               = useState(true);
-  const [userId, setUserId]                     = useState<string | null>(null);
-  const [userEmail, setUserEmail]               = useState<string | null>(null);
-  const [displayName, setDisplayName]           = useState<string | null>(null);
-  const [accessToken, setAccessToken]           = useState<string | null>(null);
+  const [role, setRole]                             = useState<AppRole | null>(null);
+  const [isLoading, setIsLoading]                   = useState(true);
+  const [userId, setUserId]                         = useState<string | null>(null);
+  const [userEmail, setUserEmail]                   = useState<string | null>(null);
+  const [displayName, setDisplayName]               = useState<string | null>(null);
+  const [accessToken, setAccessToken]               = useState<string | null>(null);
   const [mustChangePassword, setMustChangePassword] = useState(false);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) { setIsLoading(false); return; }
+    async function loadForSession(sessionUserId: string, sessionEmail: string | undefined, token: string, mustChange: boolean) {
+      setUserId(sessionUserId);
+      setUserEmail(sessionEmail ?? null);
+      setAccessToken(token);
+      setMustChangePassword(mustChange);
 
-        setUserId(session.user.id);
-        setUserEmail(session.user.email ?? null);
-        setAccessToken(session.access_token);
-        setMustChangePassword(session.user.user_metadata?.must_change_password === true);
+      const [roleRes, profileRes] = await Promise.all([
+        supabase.from("user_roles").select("role").eq("user_id", sessionUserId),
+        supabase.from("profiles").select("display_name").eq("id", sessionUserId).single(),
+      ]);
 
-        const [roleRes, profileRes] = await Promise.all([
-          supabase.from("user_roles").select("role").eq("user_id", session.user.id),
-          supabase.from("profiles").select("display_name").eq("id", session.user.id).single(),
-        ]);
+      const rows = (roleRes.data ?? []) as { role: string }[];
+      const resolvedRole: AppRole | null = PRIORITY.find((r) => rows.some((row) => row.role === r)) ?? null;
+      setRole(resolvedRole);
+      setDisplayName(profileRes.data?.display_name ?? null);
 
-        const rows = (roleRes.data ?? []) as { role: string }[];
-        const PRIORITY: AppRole[] = ["admin", "implementation", "sales", "user"];
-        const resolvedRole: AppRole | null =
-          PRIORITY.find((r) => rows.some((row) => row.role === r)) ?? null;
-        setRole(resolvedRole);
-        setDisplayName(profileRes.data?.display_name ?? null);
-
-        // Write role to a short-lived cookie so middleware can route-guard by role.
-        // This is a UX signal only — real enforcement is server-side.
-        if (resolvedRole) {
-          document.cookie = `adfl-role=${resolvedRole}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
-        }
-      } finally {
-        setIsLoading(false);
+      if (resolvedRole) {
+        document.cookie = `adfl-role=${resolvedRole}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
       }
+
+      setIsLoading(false);
     }
-    load();
+
+    function resetState() {
+      setRole(null);
+      setUserId(null);
+      setUserEmail(null);
+      setDisplayName(null);
+      setAccessToken(null);
+      setMustChangePassword(false);
+      clearRoleCookie();
+    }
+
+    // Initial load from current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.user) {
+        setIsLoading(false);
+        return;
+      }
+      loadForSession(
+        session.user.id,
+        session.user.email,
+        session.access_token,
+        session.user.user_metadata?.must_change_password === true,
+      );
+    });
+
+    // Keep state in sync with auth events
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        resetState();
+        setIsLoading(false);
+        return;
+      }
+      if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && session?.user) {
+        setIsLoading(true);
+        loadForSession(
+          session.user.id,
+          session.user.email,
+          session.access_token,
+          session.user.user_metadata?.must_change_password === true,
+        );
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   return {
