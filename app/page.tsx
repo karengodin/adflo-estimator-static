@@ -266,7 +266,7 @@ function ToolCard({ tool }: { tool: { href: string; icon: string; name: string; 
   return (
     <div
       style={{
-        background: "#131d28",
+        background: "#182130",
         border: `1px solid ${hovered ? "#00C4CC" : "#1e2d3d"}`,
         borderRadius: 16,
         padding: "20px 22px",
@@ -297,13 +297,13 @@ function ToolCard({ tool }: { tool: { href: string; icon: string; name: string; 
           >
             {tool.icon}
           </div>
-          <span style={{ fontSize: 16, fontWeight: 700, color: "#e8edf2", letterSpacing: "-0.01em" }}>
+          <span style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>
             {tool.name}
           </span>
         </div>
         <OpenBtn href={tool.href} />
       </div>
-      <p style={{ margin: 0, fontSize: 14, color: "#7a8fa3", lineHeight: 1.55 }}>
+      <p style={{ margin: 0, fontSize: 14, color: "#a8bbc9", lineHeight: 1.55 }}>
         {tool.desc}
       </p>
     </div>
