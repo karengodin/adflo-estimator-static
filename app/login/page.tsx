@@ -56,10 +56,17 @@ export default function LoginPage() {
   const [error, setError]       = useState("");
   const [loading, setLoading]   = useState(false);
 
-  const [view, setView]             = useState<"login" | "forgot" | "forgot-sent">("login");
+  const [view, setView]             = useState<"login" | "forgot" | "forgot-sent" | "signup" | "signup-sent">("login");
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
   const [resetError, setResetError]     = useState("");
+
+  const [signupName, setSignupName]         = useState("");
+  const [signupEmail, setSignupEmail]       = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupConfirm, setSignupConfirm]   = useState("");
+  const [signupLoading, setSignupLoading]   = useState(false);
+  const [signupError, setSignupError]       = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -93,6 +100,36 @@ export default function LoginPage() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function signUp() {
+    setSignupError("");
+    if (!signupName.trim()) { setSignupError("Full name is required."); return; }
+    if (!signupEmail.trim()) { setSignupError("Email is required."); return; }
+    const allowed = signupEmail.trim().toLowerCase();
+    if (!allowed.endsWith("@tapclicks.com") && !allowed.endsWith("@adflo.ai")) {
+      setSignupError("Sign up requires a @tapclicks.com or @adflo.ai email address.");
+      return;
+    }
+    if (!signupPassword) { setSignupError("Password is required."); return; }
+    if (signupPassword.length < 8) { setSignupError("Password must be at least 8 characters."); return; }
+    if (signupPassword !== signupConfirm) { setSignupError("Passwords do not match."); return; }
+
+    setSignupLoading(true);
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: signupEmail.trim(),
+        password: signupPassword,
+        options: { data: { display_name: signupName.trim() } },
+      });
+      if (error) {
+        setSignupError(error.message);
+      } else {
+        setView("signup-sent");
+      }
+    } finally {
+      setSignupLoading(false);
     }
   }
 
@@ -258,6 +295,103 @@ export default function LoginPage() {
             <div style={{ marginTop: 16, textAlign: "center" }}>
               {ghostBtn("Forgot password?", () => { setResetEmail(email); setResetError(""); setView("forgot"); })}
             </div>
+
+            <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #1e2d3d", textAlign: "center" }}>
+              <span style={{ fontSize: 13, color: "#7a8fa3" }}>Don&apos;t have an account? </span>
+              {ghostBtn("Sign up", () => { setSignupError(""); setView("signup"); }, "#00C4CC")}
+            </div>
+          </>
+        )}
+
+        {/* ── Sign up ── */}
+        {view === "signup" && (
+          <>
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#e8edf2", marginBottom: 6 }}>Create account</div>
+              <div style={{ fontSize: 13, color: "#7a8fa3" }}>
+                Available to @tapclicks.com and @adflo.ai addresses.
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#7a8fa3", marginBottom: 6 }}>
+                  Full name
+                </label>
+                <DarkInput
+                  type="text"
+                  value={signupName}
+                  onChange={(e) => setSignupName(e.target.value)}
+                  placeholder="Your name"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#7a8fa3", marginBottom: 6 }}>
+                  Email
+                </label>
+                <DarkInput
+                  type="email"
+                  value={signupEmail}
+                  onChange={(e) => setSignupEmail(e.target.value)}
+                  placeholder="you@tapclicks.com"
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#7a8fa3", marginBottom: 6 }}>
+                  Password
+                </label>
+                <DarkInput
+                  type="password"
+                  value={signupPassword}
+                  onChange={(e) => setSignupPassword(e.target.value)}
+                  placeholder="Min. 8 characters"
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#7a8fa3", marginBottom: 6 }}>
+                  Confirm password
+                </label>
+                <DarkInput
+                  type="password"
+                  value={signupConfirm}
+                  onChange={(e) => setSignupConfirm(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && signUp()}
+                  placeholder="Re-enter password"
+                />
+              </div>
+            </div>
+
+            {signupError && errorBox(signupError)}
+
+            {primaryBtn(signupLoading ? "Creating account…" : "Create account →", signUp, signupLoading)}
+
+            <div style={{ marginTop: 16, textAlign: "center" }}>
+              {ghostBtn("← Back to sign in", () => setView("login"))}
+            </div>
+          </>
+        )}
+
+        {/* ── Signup sent ── */}
+        {view === "signup-sent" && (
+          <>
+            <div
+              style={{
+                padding: "16px",
+                borderRadius: 12,
+                background: "rgba(0,196,204,0.08)",
+                border: "1px solid rgba(0,196,204,0.2)",
+                marginBottom: 20,
+              }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#e8edf2", marginBottom: 6 }}>
+                Check your email
+              </div>
+              <div style={{ fontSize: 13, color: "#7a8fa3", lineHeight: 1.5 }}>
+                We sent a confirmation link to <strong style={{ color: "#e8edf2" }}>{signupEmail}</strong>. Click it to activate your account.
+              </div>
+            </div>
+            {ghostBtn("← Back to sign in", () => setView("login"), "#00C4CC")}
           </>
         )}
 
