@@ -1131,8 +1131,8 @@ const applySuggestion = async (key: string, setting: string, value: number) => {
         {/* Header */}
         <div style={{ marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em", color: "#0f1623" }}>adfloEstimate</h1>
-            <p style={{ marginTop: 6, color: "#627286", fontSize: 14, margin: "6px 0 0" }}>Manage sessions, history, and logic settings.</p>
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: "-0.03em", color: "#00C4CC" }}>adfloEstimate</h1>
+            <p style={{ marginTop: 6, color: "#7a8fa3", fontSize: 14, margin: "6px 0 0" }}>Manage sessions, history, and logic settings.</p>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <button onClick={() => { setNewSessionOpen(true); setNewSessionName(""); setNewSessionRep(isSales ? (userEmail ?? "") : ""); setNewSessionError(""); }} style={primaryBtnStyle}>+ New Session</button>
@@ -2084,8 +2084,8 @@ function RoleCard({ icon, title, desc, onClick }: { icon: string; title: string;
 function MiniStat({ value, label, accent }: { value: string; label: string; accent: string }) {
   return (
     <div style={{ background: "#fff", border: "1px solid #dde5ef", borderRadius: 16, padding: "18px 20px", boxShadow: "0 1px 3px rgba(16,24,40,0.04)" }}>
-      <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: accent, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 12, color: "#8a9bb0", marginTop: 5, fontWeight: 500 }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.04em", color: "#e8edf2", lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 12, color: "#7a8fa3", marginTop: 5, fontWeight: 500 }}>{label}</div>
     </div>
   );
 }
@@ -2118,8 +2118,8 @@ const primaryBtnStyle: React.CSSProperties = { padding: "10px 18px", borderRadiu
 const outlineBtnStyle: React.CSSProperties = { padding: "10px 16px", borderRadius: 10, border: "1px solid #dde5ef", background: "#fff", color: "#455468", fontWeight: 600, cursor: "pointer", fontSize: 13.5, fontFamily: "inherit" };
 const fieldLabelStyle: React.CSSProperties = { display: "block", fontSize: 11, fontWeight: 700, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 };
 const fieldInputStyle: React.CSSProperties = { width: "100%", background: "#f8fafc", border: "1px solid #dde5ef", borderRadius: 12, color: "#0f1623", fontFamily: "inherit", fontSize: 14, padding: "10px 14px", outline: "none", boxSizing: "border-box" };
-const tabStyle: React.CSSProperties = { padding: "9px 14px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#627286", border: "1px solid transparent", background: "transparent", fontFamily: "inherit" };
-const activeTabStyle: React.CSSProperties = { background: "#eaf1ff", color: "#2f6fed", border: "1px solid #cddcff" };
+const tabStyle: React.CSSProperties = { padding: "9px 14px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#7a8fa3", border: "1px solid transparent", background: "transparent", fontFamily: "inherit" };
+const activeTabStyle: React.CSSProperties = { background: "rgba(0,196,204,0.08)", color: "#00C4CC", border: "1px solid rgba(0,196,204,0.25)" };
 const thStyle: React.CSSProperties = { textAlign: "left", padding: "10px 18px", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8a9bb0", fontWeight: 700, borderBottom: "1px solid #dde5ef" };
 const tdStyle: React.CSSProperties = { padding: "13px 18px", color: "#455468", verticalAlign: "middle" };
 const logicInputStyle: React.CSSProperties = { background: "#f8fafc", border: "1px solid #dde5ef", borderRadius: 8, color: "#0f1623", fontFamily: "inherit", fontSize: 13, padding: "6px 10px", outline: "none", width: 80, textAlign: "right" };

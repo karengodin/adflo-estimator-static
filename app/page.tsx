@@ -149,7 +149,7 @@ export default function HomePage() {
 
         {/* ── Tools ──────────────────────────────────────────────────────── */}
         <section>
-          <h2 style={{ margin: "0 0 14px", fontSize: 11, fontWeight: 700, color: "#3d5166", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+          <h2 style={{ margin: "0 0 14px", fontSize: 11, fontWeight: 600, color: "#7a8fa3", letterSpacing: "0.12em", textTransform: "uppercase" }}>
             Tools
           </h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
@@ -162,7 +162,7 @@ export default function HomePage() {
         {/* ── Getting started ────────────────────────────────────────────── */}
         {!sessionsLoading && !hasAnySessions && (
           <section>
-            <h2 style={{ margin: "0 0 14px", fontSize: 11, fontWeight: 700, color: "#3d5166", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            <h2 style={{ margin: "0 0 14px", fontSize: 11, fontWeight: 600, color: "#7a8fa3", letterSpacing: "0.12em", textTransform: "uppercase" }}>
               Getting Started
             </h2>
             <div style={{ background: "#131d28", border: "1px solid #1e2d3d", borderRadius: 16, overflow: "hidden" }}>
@@ -240,7 +240,7 @@ export default function HomePage() {
         {!sessionsLoading && recentSessions.length > 0 && (
           <section>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-              <h2 style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#3d5166", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+              <h2 style={{ margin: 0, fontSize: 11, fontWeight: 600, color: "#7a8fa3", letterSpacing: "0.12em", textTransform: "uppercase" }}>
                 Recent Activity
               </h2>
               <Link href="/estimator" style={{ fontSize: 12, fontWeight: 600, color: "#00C4CC", textDecoration: "none" }}>
@@ -297,13 +297,13 @@ function ToolCard({ tool }: { tool: { href: string; icon: string; name: string; 
           >
             {tool.icon}
           </div>
-          <span style={{ fontSize: 15, fontWeight: 600, color: "#e8edf2", letterSpacing: "-0.01em" }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: "#e8edf2", letterSpacing: "-0.01em" }}>
             {tool.name}
           </span>
         </div>
         <OpenBtn href={tool.href} />
       </div>
-      <p style={{ margin: 0, fontSize: 13, color: "#7a8fa3", lineHeight: 1.55 }}>
+      <p style={{ margin: 0, fontSize: 14, color: "#7a8fa3", lineHeight: 1.55 }}>
         {tool.desc}
       </p>
     </div>
@@ -370,7 +370,7 @@ function ActivityRow({ s, isLast }: { s: Session; isLast: boolean }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
-            fontSize: 14,
+            fontSize: 15,
             fontWeight: 600,
             color: "#e8edf2",
             marginBottom: 4,
@@ -383,9 +383,9 @@ function ActivityRow({ s, isLast }: { s: Session; isLast: boolean }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <TierBadge tier={s.tier} />
-          <span style={{ fontSize: 12, color: "#7a8fa3" }}>{s.estimated_hours} hrs</span>
-          <span style={{ fontSize: 12, color: "#1e2d3d" }}>·</span>
-          <span style={{ fontSize: 12, color: "#7a8fa3" }}>Updated {fmtDate(s.updated_at)}</span>
+          <span style={{ fontSize: 13, color: "#7a8fa3" }}>{s.estimated_hours} hrs</span>
+          <span style={{ fontSize: 13, color: "#1e2d3d" }}>·</span>
+          <span style={{ fontSize: 13, color: "#7a8fa3" }}>Updated {fmtDate(s.updated_at)}</span>
         </div>
       </div>
       <ActivityOpenBtn id={s.id} />
