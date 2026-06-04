@@ -122,7 +122,7 @@ export default function HomePage() {
         {/* ── Welcome banner ─────────────────────────────────────────────── */}
         <div
           style={{
-            background: "#0f1720",
+            background: "#131d28",
             border: "1px solid #1e2d3d",
             borderLeft: "4px solid #00C4CC",
             borderRadius: 16,
@@ -165,7 +165,7 @@ export default function HomePage() {
             <h2 style={{ margin: "0 0 14px", fontSize: 11, fontWeight: 700, color: "#3d5166", letterSpacing: "0.1em", textTransform: "uppercase" }}>
               Getting Started
             </h2>
-            <div style={{ background: "#0f1720", border: "1px solid #1e2d3d", borderRadius: 16, overflow: "hidden" }}>
+            <div style={{ background: "#131d28", border: "1px solid #1e2d3d", borderRadius: 16, overflow: "hidden" }}>
               {[
                 {
                   step: "1",
@@ -247,7 +247,7 @@ export default function HomePage() {
                 View all →
               </Link>
             </div>
-            <div style={{ background: "#0f1720", border: "1px solid #1e2d3d", borderRadius: 16, overflow: "hidden" }}>
+            <div style={{ background: "#131d28", border: "1px solid #1e2d3d", borderRadius: 16, overflow: "hidden" }}>
               {recentSessions.map((s, i) => (
                 <ActivityRow key={s.id} s={s} isLast={i === recentSessions.length - 1} />
               ))}
@@ -266,7 +266,7 @@ function ToolCard({ tool }: { tool: { href: string; icon: string; name: string; 
   return (
     <div
       style={{
-        background: "#0f1720",
+        background: "#131d28",
         border: `1px solid ${hovered ? "#00C4CC" : "#1e2d3d"}`,
         borderRadius: 16,
         padding: "20px 22px",
@@ -297,7 +297,7 @@ function ToolCard({ tool }: { tool: { href: string; icon: string; name: string; 
           >
             {tool.icon}
           </div>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#e8edf2", letterSpacing: "-0.01em" }}>
+          <span style={{ fontSize: 15, fontWeight: 600, color: "#e8edf2", letterSpacing: "-0.01em" }}>
             {tool.name}
           </span>
         </div>
