@@ -50,7 +50,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body style={{ margin: 0, fontFamily: "'DM Sans', sans-serif" }}>
         {isPublicPage ? children : (
-        <div style={{ display: "flex", minHeight: "100vh", background: "#f0f4f9" }}>
+        <div style={{ display: "flex", minHeight: "100vh", background: "#0a0f14" }}>
 
           {/* Sidebar */}
           <aside
@@ -58,7 +58,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               width: collapsed ? 68 : 240,
               minWidth: collapsed ? 68 : 240,
               transition: "width 0.22s cubic-bezier(0.4,0,0.2,1), min-width 0.22s cubic-bezier(0.4,0,0.2,1)",
-              background: "#0f1623",
+              background: "#0f1720",
               display: "flex",
               flexDirection: "column",
               overflow: "hidden",
@@ -80,29 +80,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             >
               {!collapsed && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div
-                    style={{
-                      width: 28,
-                      height: 28,
-                      background: "linear-gradient(135deg, #2f6fed, #4fbf9f)",
-                      borderRadius: 8,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 13,
-                      fontWeight: 800,
-                      color: "#fff",
-                      letterSpacing: "-0.04em",
-                      flexShrink: 0,
-                    }}
-                  >
-                    af
-                  </div>
+                  <img
+                    src="/adflologo.svg"
+                    alt="AdFlo"
+                    style={{ width: 28, height: 28, borderRadius: 7, flexShrink: 0 }}
+                  />
                   <span
                     style={{
                       fontSize: 15,
                       fontWeight: 700,
-                      color: "#ffffff",
+                      color: "#e8edf2",
                       letterSpacing: "-0.02em",
                       whiteSpace: "nowrap",
                     }}
@@ -247,8 +234,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               minWidth: 0,
               display: "flex",
               flexDirection: "column",
-              background:
-                "radial-gradient(circle at top right, rgba(47,111,237,0.05), transparent 30%), linear-gradient(180deg, #f5f7fb 0%, #eef3f8 100%)",
+              background: "#0a0f14",
               minHeight: "100vh",
             }}
           >
@@ -256,12 +242,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <div
               style={{
                 height: 60,
-                borderBottom: "1px solid #dde5ef",
+                borderBottom: "1px solid #1e2d3d",
                 display: "flex",
                 alignItems: "center",
                 padding: "0 28px",
-                background: "rgba(255,255,255,0.75)",
-                backdropFilter: "blur(8px)",
+                background: "#0f1720",
                 flexShrink: 0,
               }}
             >
@@ -363,9 +348,9 @@ function NavItem({
         color: isActive ? "#ffffff" : "rgba(255,255,255,0.5)",
         textDecoration: "none",
         background: isActive
-          ? "linear-gradient(90deg, rgba(47,111,237,0.25), rgba(47,111,237,0.1))"
+          ? "linear-gradient(90deg, rgba(0,196,204,0.15), rgba(0,196,204,0.05))"
           : "transparent",
-        borderLeft: isActive ? "2px solid #2f6fed" : "2px solid transparent",
+        borderLeft: isActive ? "2px solid #00C4CC" : "2px solid transparent",
         fontSize: 13.5,
         fontWeight: isActive ? 600 : 400,
         transition: "all 0.15s",
@@ -395,12 +380,12 @@ function Breadcrumb({ pathname }: { pathname: string | null }) {
   };
 
   if (segments.length === 0) {
-    return <span style={{ fontSize: 13, color: "#8a9bb0", fontWeight: 500 }}>Home</span>;
+    return <span style={{ fontSize: 13, color: "#7a8fa3", fontWeight: 500 }}>Home</span>;
   }
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <Link href="/" style={{ fontSize: 13, color: "#8a9bb0", textDecoration: "none" }}>
+      <Link href="/" style={{ fontSize: 13, color: "#7a8fa3", textDecoration: "none" }}>
         Home
       </Link>
       {segments.map((seg, i) => {
@@ -410,11 +395,11 @@ function Breadcrumb({ pathname }: { pathname: string | null }) {
 
         return (
           <span key={href} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ color: "#c8d4e0", fontSize: 12 }}>›</span>
+            <span style={{ color: "#3d5166", fontSize: 12 }}>›</span>
             {isLast ? (
-              <span style={{ fontSize: 13, color: "#2f6fed", fontWeight: 600 }}>{label}</span>
+              <span style={{ fontSize: 13, color: "#00C4CC", fontWeight: 600 }}>{label}</span>
             ) : (
-              <Link href={href as any} style={{ fontSize: 13, color: "#8a9bb0", textDecoration: "none" }}>
+              <Link href={href as any} style={{ fontSize: 13, color: "#7a8fa3", textDecoration: "none" }}>
                 {label}
               </Link>
             )}

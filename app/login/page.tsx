@@ -34,14 +34,14 @@ function DarkInput({
         width: "100%",
         padding: "11px 14px",
         borderRadius: 10,
-        border: `1px solid ${focused ? "#3b82f6" : "#1f2937"}`,
+        border: `1px solid ${focused ? "#00C4CC" : "#1e2d3d"}`,
         fontSize: 14,
         fontFamily: "inherit",
         boxSizing: "border-box",
         outline: "none",
-        color: "#f9fafb",
-        background: "#0d1117",
-        boxShadow: focused ? "0 0 0 3px rgba(59,130,246,0.18)" : "none",
+        color: "#e8edf2",
+        background: "#131d28",
+        boxShadow: focused ? "0 0 0 3px rgba(0,196,204,0.15)" : "none",
         transition: "border-color 0.15s, box-shadow 0.15s",
       }}
     />
@@ -123,10 +123,10 @@ export default function LoginPage() {
         style={{ width: 64, height: 64, borderRadius: 14, display: "block" }}
       />
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: "#f9fafb", letterSpacing: "-0.02em" }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: "#e8edf2", letterSpacing: "-0.02em" }}>
           AdFlo Tools
         </div>
-        <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>
+        <div style={{ fontSize: 13, color: "#7a8fa3", marginTop: 2 }}>
           Implementation Platform
         </div>
       </div>
@@ -139,8 +139,8 @@ export default function LoginPage() {
         marginTop: 14,
         padding: "10px 14px",
         borderRadius: 10,
-        background: "rgba(239,68,68,0.1)",
-        border: "1px solid rgba(239,68,68,0.3)",
+        background: "rgba(239,68,68,0.08)",
+        border: "1px solid rgba(239,68,68,0.25)",
         color: "#f87171",
         fontSize: 13,
       }}
@@ -158,24 +158,24 @@ export default function LoginPage() {
         width: "100%",
         padding: "12px",
         borderRadius: 12,
-        background: disabled ? "#1d4ed8" : "#3b82f6",
-        color: "#fff",
+        background: disabled ? "#00C4CC" : "#00C4CC",
+        color: "#0a0f14",
         border: "none",
         fontSize: 15,
         fontWeight: 700,
         cursor: disabled ? "not-allowed" : "pointer",
         fontFamily: "inherit",
-        opacity: disabled ? 0.5 : 1,
+        opacity: disabled ? 0.45 : 1,
         transition: "opacity 0.15s, background 0.15s",
       }}
-      onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLButtonElement).style.background = "#2563eb"; }}
-      onMouseLeave={(e) => { if (!disabled) (e.currentTarget as HTMLButtonElement).style.background = "#3b82f6"; }}
+      onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLButtonElement).style.background = "#00a8b0"; }}
+      onMouseLeave={(e) => { if (!disabled) (e.currentTarget as HTMLButtonElement).style.background = "#00C4CC"; }}
     >
       {label}
     </button>
   );
 
-  const ghostBtn = (label: string, onClick: () => void, color = "#6b7280") => (
+  const ghostBtn = (label: string, onClick: () => void, color = "#7a8fa3") => (
     <button
       onClick={onClick}
       style={{
@@ -188,7 +188,7 @@ export default function LoginPage() {
         padding: 0,
         transition: "color 0.15s",
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.color = "#9ca3af")}
+      onMouseEnter={(e) => (e.currentTarget.style.color = "#e8edf2")}
       onMouseLeave={(e) => (e.currentTarget.style.color = color)}
     >
       {label}
@@ -202,20 +202,20 @@ export default function LoginPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#0a0d14",
-        backgroundImage: "radial-gradient(#1a2035 1.5px, transparent 1.5px)",
+        background: "#0a0f14",
+        backgroundImage: "radial-gradient(#1e2d3d 1.5px, transparent 1.5px)",
         backgroundSize: "22px 22px",
         fontFamily: "'DM Sans', sans-serif",
       }}
     >
       <div
         style={{
-          background: "#111827",
-          border: "1px solid #1f2937",
+          background: "#0f1720",
+          border: "1px solid #1e2d3d",
           borderRadius: 24,
           padding: "44px 40px",
           width: 420,
-          boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.6)",
         }}
       >
         {logo}
@@ -225,7 +225,7 @@ export default function LoginPage() {
           <>
             <div style={{ display: "grid", gap: 14 }}>
               <div>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#9ca3af", marginBottom: 6 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#7a8fa3", marginBottom: 6 }}>
                   Email
                 </label>
                 <DarkInput
@@ -238,7 +238,7 @@ export default function LoginPage() {
                 />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#9ca3af", marginBottom: 6 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#7a8fa3", marginBottom: 6 }}>
                   Password
                 </label>
                 <DarkInput
@@ -265,14 +265,14 @@ export default function LoginPage() {
         {view === "forgot" && (
           <>
             <div style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#f9fafb", marginBottom: 6 }}>Reset password</div>
-              <div style={{ fontSize: 13, color: "#6b7280" }}>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#e8edf2", marginBottom: 6 }}>Reset password</div>
+              <div style={{ fontSize: 13, color: "#7a8fa3" }}>
                 Enter your email and we&apos;ll send you a reset link.
               </div>
             </div>
 
             <div>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#9ca3af", marginBottom: 6 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#7a8fa3", marginBottom: 6 }}>
                 Email
               </label>
               <DarkInput
@@ -302,19 +302,19 @@ export default function LoginPage() {
               style={{
                 padding: "16px",
                 borderRadius: 12,
-                background: "rgba(59,130,246,0.08)",
-                border: "1px solid rgba(59,130,246,0.2)",
+                background: "rgba(0,196,204,0.08)",
+                border: "1px solid rgba(0,196,204,0.2)",
                 marginBottom: 20,
               }}
             >
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#f9fafb", marginBottom: 6 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#e8edf2", marginBottom: 6 }}>
                 Check your email
               </div>
-              <div style={{ fontSize: 13, color: "#9ca3af", lineHeight: 1.5 }}>
-                We sent a reset link to <strong style={{ color: "#f9fafb" }}>{resetEmail}</strong>. Click the link to set a new password.
+              <div style={{ fontSize: 13, color: "#7a8fa3", lineHeight: 1.5 }}>
+                We sent a reset link to <strong style={{ color: "#e8edf2" }}>{resetEmail}</strong>. Click the link to set a new password.
               </div>
             </div>
-            {ghostBtn("← Back to sign in", () => setView("login"), "#3b82f6")}
+            {ghostBtn("← Back to sign in", () => setView("login"), "#00C4CC")}
           </>
         )}
       </div>

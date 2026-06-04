@@ -14,14 +14,14 @@ type Session = {
 };
 
 const TIER_STYLE: Record<string, { bg: string; color: string; border: string }> = {
-  Bronze:     { bg: "rgba(180,120,60,0.15)",  color: "#d4924a", border: "rgba(180,120,60,0.3)" },
-  Silver:     { bg: "rgba(148,163,184,0.12)", color: "#94a3b8", border: "rgba(148,163,184,0.25)" },
-  Gold:       { bg: "rgba(234,179,8,0.12)",   color: "#eab308", border: "rgba(234,179,8,0.25)" },
-  Enterprise: { bg: "rgba(168,85,247,0.12)",  color: "#a855f7", border: "rgba(168,85,247,0.25)" },
+  Bronze:     { bg: "rgba(180,120,60,0.12)",  color: "#c4834a", border: "rgba(180,120,60,0.25)" },
+  Silver:     { bg: "rgba(122,143,163,0.12)", color: "#7a8fa3", border: "rgba(122,143,163,0.25)" },
+  Gold:       { bg: "rgba(200,160,0,0.12)",   color: "#c8a000", border: "rgba(200,160,0,0.25)" },
+  Enterprise: { bg: "rgba(140,80,220,0.12)",  color: "#9b6ed4", border: "rgba(140,80,220,0.25)" },
 };
 
 function TierBadge({ tier }: { tier: string }) {
-  const s = TIER_STYLE[tier] ?? { bg: "rgba(107,114,128,0.15)", color: "#9ca3af", border: "rgba(107,114,128,0.25)" };
+  const s = TIER_STYLE[tier] ?? { bg: "rgba(61,81,102,0.3)", color: "#7a8fa3", border: "rgba(61,81,102,0.4)" };
   return (
     <span
       style={{
@@ -45,17 +45,10 @@ function fmtDate(iso: string | null) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-const CARD_BASE: React.CSSProperties = {
-  background: "#111827",
-  border: "1px solid #1f2937",
-  borderRadius: 16,
-  transition: "border-color 0.15s, box-shadow 0.15s",
-};
-
 export default function HomePage() {
   const { isSales, isLoading, userEmail } = useRole();
 
-  const [sessions, setSessions]           = useState<Session[]>([]);
+  const [sessions, setSessions]               = useState<Session[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
 
   useEffect(() => {
@@ -74,9 +67,7 @@ export default function HomePage() {
   }, [isLoading, isSales, userEmail]);
 
   if (isLoading) {
-    return (
-      <div style={{ padding: 48, color: "#6b7280", fontSize: 14 }}>Loading…</div>
-    );
+    return <div style={{ padding: 48, color: "#7a8fa3", fontSize: 14 }}>Loading…</div>;
   }
 
   const recentSessions = sessions.slice(0, 3);
@@ -114,13 +105,13 @@ export default function HomePage() {
   ].filter((t) => t.visible);
 
   return (
-    /* Bleed through the layout's 28px padding to fill content area with dark bg */
+    /* Bleed through the layout's 28px padding to fill the content area */
     <div
       style={{
         margin: -28,
         padding: 28,
         minHeight: "calc(100vh - 60px)",
-        background: "#0a0d14",
+        background: "#0a0f14",
         display: "grid",
         gap: 28,
         alignContent: "start",
@@ -131,8 +122,10 @@ export default function HomePage() {
         {/* ── Welcome banner ─────────────────────────────────────────────── */}
         <div
           style={{
-            ...CARD_BASE,
-            borderLeft: "4px solid #3b82f6",
+            background: "#0f1720",
+            border: "1px solid #1e2d3d",
+            borderLeft: "4px solid #00C4CC",
+            borderRadius: 16,
             padding: "28px 32px",
             display: "flex",
             alignItems: "center",
@@ -145,10 +138,10 @@ export default function HomePage() {
             style={{ width: 52, height: 52, borderRadius: 12, flexShrink: 0 }}
           />
           <div>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#f9fafb", letterSpacing: "-0.02em" }}>
+            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#e8edf2", letterSpacing: "-0.02em" }}>
               Welcome to AdFlo Tools
             </h1>
-            <p style={{ margin: "5px 0 0", fontSize: 14, color: "#6b7280", lineHeight: 1.5 }}>
+            <p style={{ margin: "5px 0 0", fontSize: 14, color: "#7a8fa3", lineHeight: 1.5 }}>
               Your implementation platform for scoping, configuring, and tracking AdFlo deployments.
             </p>
           </div>
@@ -156,16 +149,10 @@ export default function HomePage() {
 
         {/* ── Tools ──────────────────────────────────────────────────────── */}
         <section>
-          <h2 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          <h2 style={{ margin: "0 0 14px", fontSize: 11, fontWeight: 700, color: "#3d5166", letterSpacing: "0.1em", textTransform: "uppercase" }}>
             Tools
           </h2>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))",
-              gap: 12,
-            }}
-          >
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
             {tools.map((tool) => (
               <ToolCard key={tool.href} tool={tool} />
             ))}
@@ -175,10 +162,10 @@ export default function HomePage() {
         {/* ── Getting started ────────────────────────────────────────────── */}
         {!sessionsLoading && !hasAnySessions && (
           <section>
-            <h2 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            <h2 style={{ margin: "0 0 14px", fontSize: 11, fontWeight: 700, color: "#3d5166", letterSpacing: "0.1em", textTransform: "uppercase" }}>
               Getting Started
             </h2>
-            <div style={{ ...CARD_BASE, overflow: "hidden" }}>
+            <div style={{ background: "#0f1720", border: "1px solid #1e2d3d", borderRadius: 16, overflow: "hidden" }}>
               {[
                 {
                   step: "1",
@@ -209,7 +196,7 @@ export default function HomePage() {
                     alignItems: "flex-start",
                     gap: 16,
                     padding: "18px 24px",
-                    borderBottom: i < arr.length - 1 ? "1px solid #1f2937" : "none",
+                    borderBottom: i < arr.length - 1 ? "1px solid #162030" : "none",
                   }}
                 >
                   <div
@@ -217,9 +204,9 @@ export default function HomePage() {
                       width: 26,
                       height: 26,
                       borderRadius: "50%",
-                      background: "#1d4ed8",
-                      border: "1px solid #3b82f6",
-                      color: "#f9fafb",
+                      background: "rgba(0,196,204,0.12)",
+                      border: "1px solid rgba(0,196,204,0.3)",
+                      color: "#00C4CC",
                       fontSize: 11,
                       fontWeight: 800,
                       display: "flex",
@@ -232,13 +219,13 @@ export default function HomePage() {
                     {item.step}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "#f3f4f6", marginBottom: 2 }}>{item.title}</div>
-                    <div style={{ fontSize: 13, color: "#6b7280" }}>{item.desc}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#e8edf2", marginBottom: 2 }}>{item.title}</div>
+                    <div style={{ fontSize: 13, color: "#7a8fa3" }}>{item.desc}</div>
                   </div>
                   {item.linkLabel && (
                     <Link
                       href={item.href as Parameters<typeof Link>[0]["href"]}
-                      style={{ fontSize: 12, fontWeight: 600, color: "#3b82f6", textDecoration: "none", whiteSpace: "nowrap", marginTop: 3 }}
+                      style={{ fontSize: 12, fontWeight: 600, color: "#00C4CC", textDecoration: "none", whiteSpace: "nowrap", marginTop: 3 }}
                     >
                       {item.linkLabel} →
                     </Link>
@@ -253,17 +240,14 @@ export default function HomePage() {
         {!sessionsLoading && recentSessions.length > 0 && (
           <section>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-              <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              <h2 style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "#3d5166", letterSpacing: "0.1em", textTransform: "uppercase" }}>
                 Recent Activity
               </h2>
-              <Link
-                href="/estimator"
-                style={{ fontSize: 12, fontWeight: 600, color: "#3b82f6", textDecoration: "none" }}
-              >
+              <Link href="/estimator" style={{ fontSize: 12, fontWeight: 600, color: "#00C4CC", textDecoration: "none" }}>
                 View all →
               </Link>
             </div>
-            <div style={{ ...CARD_BASE, overflow: "hidden" }}>
+            <div style={{ background: "#0f1720", border: "1px solid #1e2d3d", borderRadius: 16, overflow: "hidden" }}>
               {recentSessions.map((s, i) => (
                 <ActivityRow key={s.id} s={s} isLast={i === recentSessions.length - 1} />
               ))}
@@ -282,14 +266,14 @@ function ToolCard({ tool }: { tool: { href: string; icon: string; name: string; 
   return (
     <div
       style={{
-        background: "#111827",
-        border: `1px solid ${hovered ? "#2563eb" : "#1f2937"}`,
+        background: "#0f1720",
+        border: `1px solid ${hovered ? "#00C4CC" : "#1e2d3d"}`,
         borderRadius: 16,
         padding: "20px 22px",
         display: "flex",
         flexDirection: "column",
         gap: 12,
-        boxShadow: hovered ? "0 0 0 1px #2563eb, 0 8px 24px rgba(59,130,246,0.12)" : "none",
+        boxShadow: hovered ? "0 0 0 1px #00C4CC, 0 8px 24px rgba(0,196,204,0.1)" : "none",
         transition: "border-color 0.15s, box-shadow 0.15s",
       }}
       onMouseEnter={() => setHovered(true)}
@@ -301,8 +285,8 @@ function ToolCard({ tool }: { tool: { href: string; icon: string; name: string; 
             style={{
               width: 38,
               height: 38,
-              background: "rgba(59,130,246,0.1)",
-              border: "1px solid rgba(59,130,246,0.2)",
+              background: "rgba(0,196,204,0.08)",
+              border: "1px solid rgba(0,196,204,0.18)",
               borderRadius: 10,
               display: "flex",
               alignItems: "center",
@@ -313,34 +297,41 @@ function ToolCard({ tool }: { tool: { href: string; icon: string; name: string; 
           >
             {tool.icon}
           </div>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#f3f4f6", letterSpacing: "-0.01em" }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#e8edf2", letterSpacing: "-0.01em" }}>
             {tool.name}
           </span>
         </div>
-        <Link
-          href={tool.href as Parameters<typeof Link>[0]["href"]}
-          style={{
-            padding: "6px 14px",
-            background: "#1d4ed8",
-            color: "#fff",
-            borderRadius: 8,
-            fontSize: 12,
-            fontWeight: 600,
-            textDecoration: "none",
-            whiteSpace: "nowrap",
-            flexShrink: 0,
-            transition: "background 0.15s",
-          }}
-          onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.background = "#2563eb")}
-          onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.background = "#1d4ed8")}
-        >
-          Open →
-        </Link>
+        <OpenBtn href={tool.href} />
       </div>
-      <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.55 }}>
+      <p style={{ margin: 0, fontSize: 13, color: "#7a8fa3", lineHeight: 1.55 }}>
         {tool.desc}
       </p>
     </div>
+  );
+}
+
+function OpenBtn({ href }: { href: string }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <Link
+      href={href as Parameters<typeof Link>[0]["href"]}
+      style={{
+        padding: "6px 14px",
+        background: hovered ? "#00a8b0" : "#00C4CC",
+        color: "#0a0f14",
+        borderRadius: 8,
+        fontSize: 12,
+        fontWeight: 700,
+        textDecoration: "none",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        transition: "background 0.15s",
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      Open →
+    </Link>
   );
 }
 
@@ -353,8 +344,8 @@ function ActivityRow({ s, isLast }: { s: Session; isLast: boolean }) {
         alignItems: "center",
         gap: 14,
         padding: "15px 22px",
-        borderBottom: isLast ? "none" : "1px solid #1f2937",
-        background: hovered ? "rgba(255,255,255,0.02)" : "transparent",
+        borderBottom: isLast ? "none" : "1px solid #162030",
+        background: hovered ? "#131d28" : "transparent",
         transition: "background 0.1s",
       }}
       onMouseEnter={() => setHovered(true)}
@@ -365,8 +356,8 @@ function ActivityRow({ s, isLast }: { s: Session; isLast: boolean }) {
           width: 36,
           height: 36,
           borderRadius: 10,
-          background: "rgba(59,130,246,0.1)",
-          border: "1px solid rgba(59,130,246,0.15)",
+          background: "rgba(0,196,204,0.08)",
+          border: "1px solid rgba(0,196,204,0.15)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -381,7 +372,7 @@ function ActivityRow({ s, isLast }: { s: Session; isLast: boolean }) {
           style={{
             fontSize: 14,
             fontWeight: 600,
-            color: "#f3f4f6",
+            color: "#e8edf2",
             marginBottom: 4,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -392,37 +383,38 @@ function ActivityRow({ s, isLast }: { s: Session; isLast: boolean }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <TierBadge tier={s.tier} />
-          <span style={{ fontSize: 12, color: "#6b7280" }}>{s.estimated_hours} hrs</span>
-          <span style={{ fontSize: 12, color: "#374151" }}>·</span>
-          <span style={{ fontSize: 12, color: "#6b7280" }}>Updated {fmtDate(s.updated_at)}</span>
+          <span style={{ fontSize: 12, color: "#7a8fa3" }}>{s.estimated_hours} hrs</span>
+          <span style={{ fontSize: 12, color: "#1e2d3d" }}>·</span>
+          <span style={{ fontSize: 12, color: "#7a8fa3" }}>Updated {fmtDate(s.updated_at)}</span>
         </div>
       </div>
-      <Link
-        href={`/estimator/sessions/${s.id}` as Parameters<typeof Link>[0]["href"]}
-        style={{
-          padding: "6px 14px",
-          border: "1px solid #1f2937",
-          borderRadius: 8,
-          fontSize: 12,
-          fontWeight: 600,
-          color: "#9ca3af",
-          textDecoration: "none",
-          whiteSpace: "nowrap",
-          flexShrink: 0,
-          background: "transparent",
-          transition: "border-color 0.15s, color 0.15s",
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLAnchorElement).style.borderColor = "#3b82f6";
-          (e.currentTarget as HTMLAnchorElement).style.color = "#60a5fa";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLAnchorElement).style.borderColor = "#1f2937";
-          (e.currentTarget as HTMLAnchorElement).style.color = "#9ca3af";
-        }}
-      >
-        Open →
-      </Link>
+      <ActivityOpenBtn id={s.id} />
     </div>
+  );
+}
+
+function ActivityOpenBtn({ id }: { id: string }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <Link
+      href={`/estimator/sessions/${id}` as Parameters<typeof Link>[0]["href"]}
+      style={{
+        padding: "6px 14px",
+        border: `1px solid ${hovered ? "#00C4CC" : "#1e2d3d"}`,
+        borderRadius: 8,
+        fontSize: 12,
+        fontWeight: 600,
+        color: hovered ? "#00C4CC" : "#7a8fa3",
+        textDecoration: "none",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        background: "transparent",
+        transition: "border-color 0.15s, color 0.15s",
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      Open →
+    </Link>
   );
 }
