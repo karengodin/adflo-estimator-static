@@ -12,8 +12,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
-  const { role, isAdmin, isSales, userEmail, displayName, mustChangePassword, userId } = useRole();
-  console.log("[layout] role:", role, "isAdmin:", isAdmin);
+  const { role, isAdmin, isSales, isLoading: roleLoading, userEmail, displayName, mustChangePassword, userId } = useRole();
+  console.log("[layout] role:", role, "isAdmin:", isAdmin, "isSales:", isSales);
 
   const isPublicPage =
     pathname?.startsWith("/q") ||
@@ -136,6 +136,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 >
   <NavSection label="Main" collapsed={collapsed} />
   <NavItem href="/" label="Home" collapsed={collapsed} icon="🏠" pathname={pathname} exact />
+  {!roleLoading && (<>
   <NavSection label="Tools" collapsed={collapsed} />
   <NavItem href="/estimator" label="adfloEstimate" collapsed={collapsed} icon="📋" pathname={pathname} exact />
   {!isSales && <NavItem href="/adfloxtract" label="adfloXtract" collapsed={collapsed} icon="🔁" pathname={pathname} />}
@@ -144,6 +145,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   {!isSales && <NavSection label="Settings" collapsed={collapsed} />}
   {isAdmin && <NavItem href="/admin" label="Admin" collapsed={collapsed} icon="⚙️" pathname={pathname} />}
   {!isSales && <NavItem href="/instances" label="Instances" collapsed={collapsed} icon="🖥️" pathname={pathname} />}
+  </>)}
 </nav>
             {/* Footer / Sign out */}
             <div

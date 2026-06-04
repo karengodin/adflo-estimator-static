@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRole } from "../../lib/hooks/useRole";
 import { supabase } from "../../lib/supabase";
 
@@ -81,7 +81,6 @@ export default function AccountPage() {
   const { userId, userEmail, displayName, role, isLoading, accessToken } = useRole();
 
   const [name, setName]           = useState("");
-  const [nameReady, setNameReady] = useState(false);
   const [nameSaving, setNameSaving]   = useState(false);
   const [nameSuccess, setNameSuccess] = useState(false);
   const [nameError, setNameError]     = useState("");
@@ -94,10 +93,9 @@ export default function AccountPage() {
   const [pwError, setPwError]       = useState("");
 
   // Initialise the name field once the role hook resolves
-  if (!nameReady && !isLoading && displayName !== null) {
-    setName(displayName ?? "");
-    setNameReady(true);
-  }
+  useEffect(() => {
+    if (!isLoading) setName(displayName ?? "");
+  }, [isLoading, displayName]);
 
   async function saveName() {
     if (!userId) return;
