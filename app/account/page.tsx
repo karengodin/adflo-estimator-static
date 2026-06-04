@@ -141,7 +141,7 @@ export default function AccountPage() {
         if (authErr) { setPwError("Current password is incorrect."); return; }
       }
 
-      const { error } = await supabase.auth.updateUser({ password: newPw });
+      const { error } = await supabase.auth.updateUser({ password: newPw, data: { must_change_password: false } });
       if (error) {
         setPwError(error.message);
       } else {

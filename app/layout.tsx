@@ -272,7 +272,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               >
                 <span>⚠️ You are using a temporary password.</span>
                 <Link
-                  href={`/admin?user=${userId}`}
+                  href={isAdmin ? `/admin?user=${userId}` : "/account"}
                   style={{ color: "#b45309", fontWeight: 600, textDecoration: "underline" }}
                 >
                   Change it now
