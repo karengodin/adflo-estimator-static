@@ -13,7 +13,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
   const { role, isAdmin, isSales, isLoading: roleLoading, userEmail, displayName, mustChangePassword, userId } = useRole();
-  console.log("[layout] role:", role, "isAdmin:", isAdmin, "isSales:", isSales);
 
   const isPublicPage =
     pathname?.startsWith("/q") ||
@@ -178,7 +177,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 </button>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {(displayName || userEmail) && (
+                  {roleLoading ? (
+                    <div style={{ height: 36, borderRadius: 8, background: "rgba(255,255,255,0.04)" }} />
+                  ) : (
                     <Link
                       href={isAdmin ? "/admin" : "/account"}
                       style={{
