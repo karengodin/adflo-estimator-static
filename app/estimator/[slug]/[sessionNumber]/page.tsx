@@ -548,6 +548,19 @@ export default function SessionPage() {
   const sowItems = useMemo(() => questions.filter((q) => q.sow && answers[String(q.id)] === q.trigger), [questions, answers]);
   const levers = useMemo(() => questions.filter((q) => q.can_remove && answers[String(q.id)] === q.trigger).sort((a, b) => b.weight - a.weight), [questions, answers]);
   const topLevers = levers.filter((q) => !activatedLevers.includes(q.id)).slice(0, 4);
+  const leverSavings = useMemo(
+    () => activatedLevers.reduce((s, id) => { const q = questions.find((x) => x.id === id); return s + (q?.weight ?? 0); }, 0),
+    [activatedLevers, questions]
+  );
+  const adjustedExpected = Math.max(0, est.expected - leverSavings);
+  const adjustedTier = useMemo(() => getTier(adjustedExpected, logic), [adjustedExpected, logic]);
+  console.log("[levers]", {
+    baseExpected: est.expected,
+    activatedLevers,
+    leverDetails: activatedLevers.map((id) => { const q = questions.find((x) => x.id === id); return { id, name: q?.lever_name ?? q?.question?.slice(0, 40), weight: q?.weight }; }),
+    leverSavings,
+    adjustedExpected,
+  });
 
   const srdIsStale = useMemo(() => {
     if (!srdData) return false;
@@ -701,15 +714,15 @@ export default function SessionPage() {
       <div style={{ width: 236, minWidth: 236, background: "#f7f9fc", borderRight: "1px solid #e3e9f1", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "22px 18px 16px", borderBottom: "1px solid #dde5ef" }}>
           <div style={{ fontSize: 11, color: "#8a9bb0", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12 }}>Live Estimate</div>
-          <div style={{ fontSize: 44, fontWeight: 800, lineHeight: 0.95, letterSpacing: "-0.04em", color: "#0f1623", marginBottom: 4 }}>{est.expected}</div>
-          <div style={{ fontSize: 13, color: "#627286", marginBottom: 12 }}>expected hrs</div>
-          <div style={getTierStyle(currentTier.name)}>● {currentTier.name}</div>
+          <div style={{ fontSize: 44, fontWeight: 800, lineHeight: 0.95, letterSpacing: "-0.04em", color: "#0f1623", marginBottom: 4 }}>{adjustedExpected}</div>
+          <div style={{ fontSize: 13, color: "#627286", marginBottom: 12 }}>expected hrs{leverSavings > 0 ? ` (−${leverSavings} levers)` : ""}</div>
+          <div style={getTierStyle(adjustedTier.name)}>● {adjustedTier.name}</div>
           <div style={{ fontSize: 12, color: "#8a9bb0", marginTop: 8 }}>Best: {est.best} · Worst: {est.worst}</div>
           <div style={{ height: 5, background: "#e2e8f0", borderRadius: 999, overflow: "hidden", margin: "12px 0 8px" }}>
-            <div style={{ height: "100%", width: `${Math.min((est.expected / 300) * 100, 100)}%`, background: "linear-gradient(90deg, #2f6fed, #4fbf9f)", borderRadius: 999 }} />
+            <div style={{ height: "100%", width: `${Math.min((adjustedExpected / 300) * 100, 100)}%`, background: "linear-gradient(90deg, #2f6fed, #4fbf9f)", borderRadius: 999 }} />
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#8a9bb0" }}>
-            <span>Timeline: {currentTier.timeline}</span>
+            <span>Timeline: {adjustedTier.timeline}</span>
             <span>{answeredCount}/{visibleQuestions.length}</span>
           </div>
           <div style={{ marginTop: 12, display: "grid", gap: 3 }}>
@@ -880,10 +893,10 @@ export default function SessionPage() {
               <div style={{ marginBottom: 24 }}>
                 <h2 style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", color: "#0f1623", marginBottom: 6 }}>Scope Reduction Levers</h2>
                 <p style={{ fontSize: 14, color: "#627286" }}>Toggle features off to reduce hours or drop a tier.</p>
-                <div style={{ marginTop: 12, fontSize: 13, color: "#455468" }}>💡 Current estimate: <strong>{est.expected} hours</strong> · {currentTier.name}</div>
+                <div style={{ marginTop: 12, fontSize: 13, color: "#455468" }}>💡 Base estimate: <strong>{est.expected} hours</strong> · {currentTier.name}</div>
                 {activatedLevers.length > 0 && (
                   <div style={{ marginTop: 8, padding: "10px 14px", background: "#edf8f2", border: "1px solid #cfe7d7", borderRadius: 12, fontSize: 13, color: "#1f9d55", fontWeight: 600 }}>
-                    ⚡ Adjusted: {est.expected} hrs · {currentTier.name} (saving {activatedLevers.reduce((s, id) => { const q = questions.find((x) => x.id === id); return s + (q?.weight || 0); }, 0)} hrs)
+                    ⚡ Adjusted: {adjustedExpected} hrs · {adjustedTier.name} (saving {leverSavings} hrs)
                   </div>
                 )}
               </div>
