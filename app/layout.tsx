@@ -57,6 +57,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             style={{
               width: collapsed ? 68 : 240,
               minWidth: collapsed ? 68 : 240,
+              height: "100vh",
+              position: "sticky",
+              top: 0,
               transition: "width 0.22s cubic-bezier(0.4,0,0.2,1), min-width 0.22s cubic-bezier(0.4,0,0.2,1)",
               background: "#0f1720",
               display: "flex",
@@ -127,6 +130,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 <nav
   style={{
     flex: 1,
+    overflowY: "auto",
     padding: "12px 10px",
     display: "flex",
     flexDirection: "column",
