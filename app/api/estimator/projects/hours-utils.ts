@@ -55,12 +55,23 @@ export function distributeHours(
   totalHours: number
 ): Record<PhaseName, Record<string, number>> {
   const r = (n: number) => Math.round(n);
-  const h = (k: string) => hoursByCategory[k] ?? 0;
 
-  return {
+  // "Requirements Documentation" and "Production Configuration" are fixed overhead
+  // slices of totalHours.  Everything else is scaled proportionally from
+  // hoursByCategory so the grand total equals totalHours exactly.
+  const reqDocs   = r(totalHours * 0.10);
+  const prodConfig = r(totalHours * 0.15);
+  const remaining  = totalHours - reqDocs - prodConfig;
+
+  const categorySum = Object.values(hoursByCategory).reduce((a, b) => a + b, 0);
+  const scale = categorySum > 0 ? remaining / categorySum : 0;
+  // Don't round here — let the outer r() at each allocation site do a single round.
+  const h = (k: string) => (hoursByCategory[k] ?? 0) * scale;
+
+  const result = {
     discovery: {
       "Program Management":         r(h("Program Management") * 0.25),
-      "Requirements Documentation": r(totalHours * 0.10),
+      "Requirements Documentation": reqDocs,
       "Risk Buffer":                r(h("Risk Buffer") * 0.25),
     },
     pilot: {
@@ -82,10 +93,15 @@ export function distributeHours(
       "Risk Buffer":                      r(h("Risk Buffer") * 0.25),
     },
     golive: {
-      "Production Configuration": r(totalHours * 0.15),
+      "Production Configuration": prodConfig,
       "Go-Live Support":          0,
       "Program Management":       r(h("Program Management") * 0.25),
       "Risk Buffer":              r(h("Risk Buffer") * 0.25),
     },
   };
+
+  const total = Object.values(result).flatMap(Object.values).reduce((a, b) => a + b, 0);
+  console.log(`[distributeHours] totalHours=${totalHours} distributed=${total} diff=${total - totalHours}`);
+
+  return result;
 }
