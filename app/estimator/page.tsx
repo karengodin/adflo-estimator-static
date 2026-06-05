@@ -598,6 +598,13 @@ export default function EstimatorPage() {
   );
   const adjustedExpected = Math.max(0, est.expected - leverSavings);
   const adjustedTier = useMemo(() => getTier(adjustedExpected, logic), [adjustedExpected, logic]);
+  console.log("[levers]", {
+    baseExpected: est.expected,
+    activatedLevers,
+    leverDetails: activatedLevers.map((id) => { const q = questions.find((x) => x.id === id); return { id, name: q?.lever_name ?? q?.question?.slice(0, 40), weight: q?.weight }; }),
+    leverSavings,
+    adjustedExpected,
+  });
 
   const filteredSessions = useMemo(() => {
     let result = sessions;
