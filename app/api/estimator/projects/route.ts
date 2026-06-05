@@ -41,11 +41,12 @@ export async function POST(req: NextRequest) {
     }>;
     const logicSettings = logicRes.data ?? {};
 
-    // Use the stored estimate as the base so the project matches what the IM saw.
-    // Still run calcEstimate to get the per-category breakdown for distribution.
+    // Use the stored session estimate as the base — never re-derive the total from answers,
+    // since the stored value is what the IM reviewed and approved.
+    // Still run calcEstimate to get per-category proportions for distributing hours.
     const breakdown       = calcEstimateFromAnswers(answers, questions, logicSettings);
     const hoursByCategory = breakdownToHoursByCategory(breakdown);
-    const totalHours      = (sessionData?.estimated_hours as number | null) ?? breakdown.total;
+    const totalHours      = sessionData?.estimated_hours ?? breakdown.total;
 
     // Compute phase→category estimated hours
     const distribution = distributeHours(hoursByCategory, totalHours);

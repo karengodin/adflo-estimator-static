@@ -418,7 +418,6 @@ export default function ProjectTab({
   const totalEst = varianceRows.reduce((s, r) => s + r.estimated_hours, 0) || estimatedHours;
   const totalAct = varianceRows.reduce((s, r) => s + r.actual_hours, 0);
   const overallVariance = totalEst - totalAct;
-  const overheadHrs = Math.max(0, totalEst - currentSessionHours);
 
   // Answers-changed banner: compare current estimatedHours with latest version
   const latestVersion = versions.find((v) => v.is_current) ?? versions[versions.length - 1];
@@ -482,9 +481,7 @@ export default function ProjectTab({
           <OverviewStat
             label="Estimated Hours"
             value={`${totalEst}`}
-            sub={overheadHrs > 0
-              ? `hrs · Base: ${currentSessionHours} hrs · Overhead: +${overheadHrs} hrs`
-              : "hrs"}
+            sub="hrs · Includes overhead categories (QA, PM, documentation)"
           />
           <OverviewStat label="Actual Hours" value={`${totalAct}`} sub="hrs" />
           <OverviewStat
