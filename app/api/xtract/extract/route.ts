@@ -15,12 +15,12 @@ const UI_TYPE_TO_ENTITY: Record<string, string> = {
 // Old UI lookup endpoint (form types are fetched per-cluster via fetchFormsByAllClusters)
 const OLD_UI_LOOKUP_ENDPOINT = "/app/iotool/lookups/types?showAll=true";
 
-// New UI (Adflo OMS) endpoints — primary for these four types; returns all forms across all BUs
+// New UI (Adflo OMS) endpoints — only used for line_item_forms.
+// client_forms, order_forms, flight_forms, and task_forms all use the Old UI
+// cluster-merge path (fetchFormsByAllClusters) because the New UI endpoints
+// return 0 or partial results on Classic/hybrid instances.
 const NEW_UI_ENDPOINTS: Partial<Record<string, string>> = {
-  client_forms:    "/server/api/entityforms/client?all=true&entity_type=client&entities_in_use=min&datatable=true&summary=true&page=0,1000&is_template=false&sql=2",
-  order_forms:     "/server/api/entityforms/order?all=true&entity_type=order&entities_in_use=min&datatable=true&summary=true&page=0,1000&is_template=false&sql=2",
   line_item_forms: "/server/api/entityforms/line_item?all=true&entity_type=line_item&entities_in_use=min&datatable=true&summary=true&page=0,1000&is_template=false&sql=2",
-  flight_forms:    "/server/api/entityforms/flight?all=true&entity_type=flight&entities_in_use=min&datatable=true&summary=true&page=0,1000&is_template=false&sql=2",
 };
 
 
