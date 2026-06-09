@@ -137,13 +137,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Network error: ${String(err).slice(0, 200)}` }, { status: 502 });
     }
 
-    // Detect session expiry in CSV response
+    // Detect session expiry — only flag if response looks like a login redirect, not just field data containing these words
     const csvLower = csv.toLowerCase();
-    if (
-      !csv.includes("----- SECTION ----- SEPARATOR -----") &&
-      (csvLower.includes("login") || csvLower.includes("session") || csv.length < 200)
-    ) {
-      return NextResponse.json({ error: "Session expired. Refresh the cookie on the Instances page." }, { status: 401 });
+    if (!csv.includes("----- SECTION ----- SEPARATOR -----")) {
+      const looksLikeLoginRedirect =
+        csvLower.includes('"state":"login"') ||
+        csvLower.includes("'state':'login'") ||
+        csvLower.includes('"redirect"') ||
+        (csv.length < 200 && csvLower.includes("login"));
+      if (looksLikeLoginRedirect) {
+        return NextResponse.json({ error: "Session expired. Refresh the cookie on the Instances page." }, { status: 401 });
+      }
+      // If no separator and not a login redirect, still try to parse — may be a single-section response
     }
 
     const sectionNames = extractionType === "line_item_forms" ? SECTION_NAMES_PRODUCTS : SECTION_NAMES_FORMS;

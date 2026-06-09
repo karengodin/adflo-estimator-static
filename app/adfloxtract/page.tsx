@@ -91,9 +91,17 @@ function exportManifestCsv(items: ResultItem[], entityType: string, instanceName
   URL.revokeObjectURL(url)
 }
 
-function safeSheetName(name: string, idx: number): string {
+function safeSheetName(name: string, idx: number, usedNames?: Set<string>): string {
   const cleaned = name.replace(/[\\/*?[\]:]/g, '_').slice(0, 28)
-  return cleaned || `Item_${idx}`
+  const base = cleaned || `Item_${idx}`
+  if (!usedNames) return base
+  if (!usedNames.has(base)) { usedNames.add(base); return base }
+  for (let i = 2; i <= 999; i++) {
+    const suffix = `_${i}`
+    const candidate = base.slice(0, 28 - suffix.length) + suffix
+    if (!usedNames.has(candidate)) { usedNames.add(candidate); return candidate }
+  }
+  return `Item_${idx}`
 }
 
 export default function AdfloXtractPage() {
@@ -277,12 +285,14 @@ export default function AdfloXtractPage() {
   const exportLookupValuesXlsx = () => {
     if (!runResult || Object.keys(lookupValues).length === 0) return
     const wb = XLSX.utils.book_new()
+    const usedNames = new Set<string>()
     for (const item of runResult.items) {
       const vals = lookupValues[item.id]
       if (!vals?.length) continue
       const ws = XLSX.utils.json_to_sheet(vals as object[])
-      XLSX.utils.book_append_sheet(wb, ws, safeSheetName(item.name, 0))
+      XLSX.utils.book_append_sheet(wb, ws, safeSheetName(item.name, 0, usedNames))
     }
+    if (wb.SheetNames.length === 0) return
     XLSX.writeFile(wb, `${selectedInstance!.name}_lookup_values_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
@@ -294,6 +304,7 @@ export default function AdfloXtractPage() {
     setExportError(null)
 
     const wb = XLSX.utils.book_new()
+    const usedNames = new Set<string>()
     const items = runResult.items.filter(i => selectedIds.has(i.id))
 
     try {
@@ -317,7 +328,7 @@ export default function AdfloXtractPage() {
         }
 
         const sections = data.sections ?? {}
-        const sheetName = safeSheetName(item.name, idx)
+        const sheetName = safeSheetName(item.name, idx, usedNames)
 
         // Use the 'fields' section as the primary data; fall back to manifest row
         const fields = sections.fields ?? sections.flight_fields ?? []
@@ -365,7 +376,7 @@ export default function AdfloXtractPage() {
   const showFormExport = runResult ? FORM_DETAIL_TYPES.has(runResult.entity_type) : false
   const showLookupValues = runResult?.entity_type === 'lookups'
   const showProductCols = runResult?.entity_type === 'line_item_forms'
-  const hasLookupValues = Object.keys(lookupValues).length > 0
+  const hasLookupValues = Object.values(lookupValues).some(arr => arr.length > 0)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px)', fontFamily: 'DM Sans, sans-serif' }}>
@@ -685,7 +696,7 @@ export default function AdfloXtractPage() {
                                     <td style={{ padding: '6px 10px', color: '#94a3b8', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>
                                       {item.id}
                                     </td>
-                                    <td style={{ padding: '6px 10px', color: '#0f1623' }}>
+                                    <td style={{ padding: '6px 10px', color: '#f1f5f9' }}>
                                       {item.name || <span style={{ color: '#c8d5e8' }}>—</span>}
                                     </td>
                                     {showLookupValues && (
@@ -695,7 +706,7 @@ export default function AdfloXtractPage() {
                                     )}
                                     {showProductCols && (
                                       <>
-                                        <td style={{ padding: '6px 10px', color: '#627286', fontSize: 12 }}>
+                                        <td style={{ padding: '6px 10px', color: '#94a3b8', fontSize: 12 }}>
                                           {item.bu_names?.join(', ') || <span style={{ color: '#c8d5e8' }}>—</span>}
                                         </td>
                                         <td style={{ padding: '6px 10px', textAlign: 'center' }}>
