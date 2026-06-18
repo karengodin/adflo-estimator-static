@@ -84,6 +84,10 @@ type AnalysisSummary = {
   notFound: number;
 };
 
+type ParentForm = { id: string; name: string; entityType: string };
+
+type ManualOverride = { parentId: string; parentName: string; entityType: string };
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ENTITY_TYPES = [
@@ -870,6 +874,12 @@ function ReassignmentTab({
   const [executing, setExecuting] = useState(false);
   const [execResults, setExecResults] = useState<Record<string, { success: boolean; message: string }>>({});
 
+  // ── Manual override state ──────────────────────────────────────────────────
+  const [parentForms, setParentForms] = useState<ParentForm[]>([]);
+  const [parentFormsLoading, setParentFormsLoading] = useState(false);
+  const [manualOverrides, setManualOverrides] = useState<Record<string, ManualOverride>>({});
+  const [openPickerFor, setOpenPickerFor] = useState<string | null>(null);
+
   // ── Manual queue state ─────────────────────────────────────────────────────
   const [taskInput, setTaskInput] = useState("");
   const [taskResolved, setTaskResolved] = useState<ExtractionItem | null>(null);
@@ -892,12 +902,44 @@ function ReassignmentTab({
     setApprovalMap({});
     setConflictResolutions({});
     setExecResults({});
+    setManualOverrides({});
+    setOpenPickerFor(null);
   };
 
   const setMode = (newUnassignedOnly: boolean) => {
     if (newUnassignedOnly === unassignedOnly) return;
     setUnassignedOnly(newUnassignedOnly);
     if (analysisState === "done" || analysisState === "error") resetAnalysis();
+  };
+
+  const loadParentForms = useCallback(async () => {
+    if (parentForms.length > 0 || parentFormsLoading) return;
+    setParentFormsLoading(true);
+    try {
+      const res = await fetch(`/api/adflo/parent-forms?instanceId=${instanceId}`);
+      const data = await res.json();
+      setParentForms(Array.isArray(data.forms) ? data.forms : []);
+    } catch {
+      // silently fail — picker will show empty list
+    } finally {
+      setParentFormsLoading(false);
+    }
+  }, [instanceId, parentForms.length, parentFormsLoading]);
+
+  const applyManualOverride = (taskFormId: string, parentId: string, parentName: string, entityType: string) => {
+    setManualOverrides((prev) => ({ ...prev, [taskFormId]: { parentId, parentName, entityType } }));
+    setApprovalMap((prev) => ({ ...prev, [taskFormId]: "approved" }));
+    setOpenPickerFor(null);
+  };
+
+  const clearManualOverride = (taskFormId: string) => {
+    setManualOverrides((prev) => { const n = { ...prev }; delete n[taskFormId]; return n; });
+    setApprovalMap((prev) => ({ ...prev, [taskFormId]: undefined }));
+  };
+
+  const openPicker = (taskFormId: string) => {
+    setOpenPickerFor(taskFormId);
+    loadParentForms();
   };
 
   const runAnalysis = async () => {
@@ -908,6 +950,8 @@ function ReassignmentTab({
     setApprovalMap({});
     setConflictResolutions({});
     setExecResults({});
+    setManualOverrides({});
+    setOpenPickerFor(null);
 
     try {
       const res = await fetch("/api/adflo/analyze", {
@@ -955,7 +999,9 @@ function ReassignmentTab({
   const isReadyToExecute = (p: AnalysisProposal) =>
     !execResults[p.taskFormId] &&
     approvalMap[p.taskFormId] === "approved" &&
-    (p.status === "conflict" ? !!conflictResolutions[p.taskFormId] : !!p.proposedParentId);
+    (p.status === "conflict"
+      ? !!conflictResolutions[p.taskFormId]
+      : !!(manualOverrides[p.taskFormId] || p.proposedParentId));
 
   const executeApproved = async () => {
     const toRun = proposals.filter(isReadyToExecute);
@@ -965,17 +1011,17 @@ function ReassignmentTab({
     let successCount = 0;
 
     for (const p of toRun) {
-      const resolution = conflictResolutions[p.taskFormId];
-      const parentId   = resolution?.parentId   ?? p.proposedParentId;
-      const parentName = resolution?.parentName ?? p.proposedParentName;
+      const manualOverride = manualOverrides[p.taskFormId];
+      const resolution     = conflictResolutions[p.taskFormId];
+      const parentId       = manualOverride?.parentId   ?? resolution?.parentId   ?? p.proposedParentId;
+      const parentName     = manualOverride?.parentName ?? resolution?.parentName ?? p.proposedParentName;
+      const parentEntityType = manualOverride?.entityType ?? p.parentEntityType;
 
       const taskFormId = String(p.taskFormId ?? "").trim();
       if (!taskFormId) {
-        console.error("[executeApproved] taskFormId missing for proposal:", p);
         setExecResults(prev => ({ ...prev, [p.taskFormId]: { success: false, message: `Internal error: taskFormId is missing (proposal: ${p.taskFormName})` } }));
         continue;
       }
-      console.log("[executeApproved] Sending:", { taskFormId, parentId, parentName, parentEntityType: p.parentEntityType });
 
       try {
         const res = await fetch("/api/adflo/assign-task-form-parent", {
@@ -986,7 +1032,7 @@ function ReassignmentTab({
             taskFormId,
             newParentFormId:   parentId,
             newParentFormName: parentName,
-            parentEntityType:  p.parentEntityType,
+            parentEntityType,
           }),
         });
         const data = await res.json();
@@ -1207,7 +1253,9 @@ function ReassignmentTab({
                     const approval   = approvalMap[p.taskFormId];
                     const result     = execResults[p.taskFormId];
                     const resolution = conflictResolutions[p.taskFormId];
-                    const isAutoApproved = approval === "approved" && p.confidence === "high" && !resolution;
+                    const override   = manualOverrides[p.taskFormId];
+                    const isAutoApproved = approval === "approved" && p.confidence === "high" && !resolution && !override;
+                    const pickerOpen = openPickerFor === p.taskFormId;
 
                     // ── Row tint ──
                     let rowBg = "transparent";
@@ -1285,12 +1333,66 @@ function ReassignmentTab({
                               </div>
                             )
                           ) : p.proposedParentId ? (
-                            <>
-                              <div title={p.proposedParentName ?? undefined} style={{ fontWeight: 600, color: "#0f1623", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.proposedParentName}</div>
-                              <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>#{p.proposedParentId}</div>
-                            </>
+                            // Proposed row with a parent — show name + optional Change link
+                            pickerOpen ? (
+                              <ParentPickerDropdown
+                                parentForms={parentForms}
+                                loading={parentFormsLoading}
+                                onSelect={(id, name, entityType) => applyManualOverride(p.taskFormId, id, name, entityType)}
+                                onClose={() => setOpenPickerFor(null)}
+                              />
+                            ) : (
+                              <>
+                                <div title={(override?.parentName ?? p.proposedParentName) ?? undefined} style={{ fontWeight: 600, color: "#0f1623", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {override?.parentName ?? p.proposedParentName}
+                                </div>
+                                <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>
+                                  #{override?.parentId ?? p.proposedParentId}
+                                </div>
+                                {!result && (
+                                  <button
+                                    onClick={() => openPicker(p.taskFormId)}
+                                    style={{ marginTop: 4, fontSize: 11, color: "#2f6fed", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}
+                                  >
+                                    Change
+                                  </button>
+                                )}
+                              </>
+                            )
                           ) : (
-                            <span style={{ fontSize: 12, color: "#94a3b8" }}>Not found in Classic</span>
+                            // No proposed parent (not_found or proposed with no Adflo match)
+                            pickerOpen ? (
+                              <ParentPickerDropdown
+                                parentForms={parentForms}
+                                loading={parentFormsLoading}
+                                onSelect={(id, name, entityType) => applyManualOverride(p.taskFormId, id, name, entityType)}
+                                onClose={() => setOpenPickerFor(null)}
+                              />
+                            ) : override ? (
+                              <>
+                                <div title={override.parentName} style={{ fontWeight: 600, color: "#0f1623", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {override.parentName}
+                                </div>
+                                <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginTop: 2 }}>#{override.parentId}</div>
+                                {!result && (
+                                  <button
+                                    onClick={() => openPicker(p.taskFormId)}
+                                    style={{ marginTop: 4, fontSize: 11, color: "#2f6fed", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}
+                                  >
+                                    Change
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              !result && (
+                                <button
+                                  onClick={() => openPicker(p.taskFormId)}
+                                  style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 10px", color: "#2f6fed", borderColor: "#bfdbfe" }}
+                                >
+                                  Assign parent
+                                </button>
+                              )
+                            )
                           )}
                         </td>
 
@@ -1333,25 +1435,22 @@ function ReassignmentTab({
                               </div>
                             )
 
-                          ) : p.status === "not_found" ? (
-                            // Not found — can only skip
-                            approval === "skipped" ? (
-                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                                <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(148,163,184,0.15)", color: "#64748b", alignSelf: "flex-start" }}>Skipped</span>
-                                <button onClick={() => setApproval(p.taskFormId, undefined)} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}>Undo</button>
-                              </div>
-                            ) : (
-                              <button onClick={() => setApproval(p.taskFormId, "skipped")} style={{ ...ghostBtnStyle, fontSize: 11, padding: "4px 10px", color: "#64748b" }}>Skip</button>
-                            )
-
-                          ) : p.proposedParentId ? (
-                            // Proposed row with a parent ID — full approve/skip
+                          ) : p.proposedParentId || override ? (
+                            // Has a parent (AI-proposed or manually overridden) — full approve/skip
                             approval === "approved" ? (
                               <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                                 <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(34,197,94,0.12)", color: "#16a34a", alignSelf: "flex-start" }}>
                                   {isAutoApproved ? "Auto-approved" : "Approved"}
                                 </span>
-                                <button onClick={() => setApproval(p.taskFormId, undefined)} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}>Undo</button>
+                                <button
+                                  onClick={() => {
+                                    setApproval(p.taskFormId, undefined);
+                                    if (override) clearManualOverride(p.taskFormId);
+                                  }}
+                                  style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px", alignSelf: "flex-start" }}
+                                >
+                                  Undo
+                                </button>
                               </div>
                             ) : approval === "skipped" ? (
                               <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -1366,7 +1465,7 @@ function ReassignmentTab({
                             )
 
                           ) : (
-                            // Proposed but no Adflo match — skip only
+                            // No parent at all yet — skip only (Assign parent button is in the Proposed Parent cell)
                             approval === "skipped" ? (
                               <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                                 <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "rgba(148,163,184,0.15)", color: "#64748b", alignSelf: "flex-start" }}>Skipped</span>
@@ -1552,6 +1651,92 @@ function ReassignmentTab({
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Parent Picker Dropdown ───────────────────────────────────────────────────
+
+const ENTITY_TYPE_PILL: Record<string, { label: string; color: string; bg: string }> = {
+  order:     { label: "Order",   color: "#2f6fed", bg: "rgba(47,111,237,0.10)" },
+  client:    { label: "Client",  color: "#7c3aed", bg: "rgba(124,58,237,0.10)" },
+  flight:    { label: "Flight",  color: "#b45309", bg: "rgba(251,191,36,0.10)" },
+  line_item: { label: "Product", color: "#16a34a", bg: "rgba(34,197,94,0.10)" },
+};
+
+function ParentPickerDropdown({
+  parentForms,
+  loading,
+  onSelect,
+  onClose,
+}: {
+  parentForms: ParentForm[];
+  loading: boolean;
+  onSelect: (id: string, name: string, entityType: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+
+  const filtered = query.trim()
+    ? parentForms.filter((f) => f.name.toLowerCase().includes(query.toLowerCase()))
+    : parentForms;
+
+  return (
+    <div style={{ border: "1px solid #dde5ef", borderRadius: 8, background: "#fff", overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.07)" }}>
+      <input
+        autoFocus
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search forms…"
+        style={{
+          display: "block", width: "100%", boxSizing: "border-box",
+          padding: "7px 10px", border: "none", borderBottom: "1px solid #eef3f8",
+          fontSize: 12, fontFamily: "inherit", outline: "none", color: "#0f1623",
+        }}
+      />
+      <div style={{ maxHeight: 180, overflowY: "auto" }}>
+        {loading ? (
+          <div style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>
+            {query ? `No forms match "${query}"` : "No forms available"}
+          </div>
+        ) : (
+          filtered.slice(0, 80).map((f) => {
+            const pill = ENTITY_TYPE_PILL[f.entityType];
+            return (
+              <div
+                key={f.id}
+                onClick={() => onSelect(f.id, f.name, f.entityType)}
+                style={{
+                  padding: "6px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 7,
+                  borderBottom: "1px solid #f8fafc",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f6ff")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <span style={{ flex: 1, fontSize: 12, color: "#0f1623", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {f.name}
+                </span>
+                {pill && (
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 999, color: pill.color, background: pill.bg, flexShrink: 0 }}>
+                    {pill.label}
+                  </span>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div style={{ padding: "5px 8px", borderTop: "1px solid #eef3f8", textAlign: "right" }}>
+        <button
+          onClick={onClose}
+          style={{ fontSize: 11, color: "#94a3b8", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 6px" }}
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
