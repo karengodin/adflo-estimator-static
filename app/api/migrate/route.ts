@@ -247,6 +247,52 @@ async function fetchItem(
   }
 }
 
+// ─── CSRF token probe ─────────────────────────────────────────────────────────
+//
+// Some TapClicks instances require a CSRF token on mutation requests. We fetch
+// the /app/iotool page (which is always present) with the session cookie and
+// scan the HTML for any of the four common token patterns. Returns null if the
+// page is unreachable or contains no recognisable token — in that case we
+// proceed without it and let the API calls fail/succeed on their own merits.
+
+async function fetchCsrfToken(
+  base: string,
+  headers: Record<string, string>
+): Promise<string | null> {
+  try {
+    const response = await fetch(`${base}/app/iotool`, { method: "GET", headers });
+    const html = await response.text();
+
+    // <meta name="csrf-token" content="..."> (attribute order may vary)
+    const metaCsrf =
+      html.match(/<meta[^>]+name=["']csrf-token["'][^>]+content=["']([^"']+)["']/i) ??
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']csrf-token["']/i);
+    if (metaCsrf) return metaCsrf[1];
+
+    // <meta name="X-CSRF-TOKEN" content="...">
+    const metaXCsrf =
+      html.match(/<meta[^>]+name=["']X-CSRF-TOKEN["'][^>]+content=["']([^"']+)["']/i) ??
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']X-CSRF-TOKEN["']/i);
+    if (metaXCsrf) return metaXCsrf[1];
+
+    // <input name="csrf_token" value="...">
+    const inputCsrf =
+      html.match(/<input[^>]+name=["']csrf_token["'][^>]+value=["']([^"']+)["']/i) ??
+      html.match(/<input[^>]+value=["']([^"']+)["'][^>]+name=["']csrf_token["']/i);
+    if (inputCsrf) return inputCsrf[1];
+
+    // <input name="_token" value="...">
+    const inputToken =
+      html.match(/<input[^>]+name=["']_token["'][^>]+value=["']([^"']+)["']/i) ??
+      html.match(/<input[^>]+value=["']([^"']+)["'][^>]+name=["']_token["']/i);
+    if (inputToken) return inputToken[1];
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -311,7 +357,15 @@ export async function POST(req: NextRequest) {
     Cookie: cookie,
     Accept: "application/json",
     "X-Requested-With": "XMLHttpRequest",
+    Origin: base,
+    Referer: `${base}/`,
   };
+
+  const csrfToken = await fetchCsrfToken(base, headers);
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
+    headers["X-XSRF-TOKEN"] = csrfToken;
+  }
 
   // ── 3. Main pass ───────────────────────────────────────────────────────────
 

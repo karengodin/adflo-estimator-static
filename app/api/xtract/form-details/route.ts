@@ -17,8 +17,18 @@ const DETAIL_ENDPOINT: Record<string, string> = {
   line_item_forms: "/app/iotool/products/export",
 };
 
+const ADFLO_ENTITY_SINGULAR: Record<string, string> = {
+  order_forms:     "order",
+  client_forms:    "client",
+  flight_forms:    "flight",
+  line_item_forms: "line_item",
+};
+
 const SECTION_NAMES_FORMS = ["form", "cluster", "placeholder", "field_groups", "fields", "field_cascading_rules", "lookup_values"];
 const SECTION_NAMES_PRODUCTS = ["line_item", "cluster", "field_groups", "fields", "field_cascading_rules", "lookup_values", "flight_field_groups", "flight_fields", "flight_field_cascading_rules"];
+const SECTION_NAMES_ADFLO_FORMS = ["form", "cluster", "fields", "field_cascading_rules", "lookup_values"];
+
+const ADFLO_FORM_TYPES = new Set(["order_forms", "client_forms", "flight_forms", "line_item_forms"]);
 
 function parseCSVLine(line: string): string[] {
   const result: string[] = [];
@@ -82,8 +92,8 @@ function parseSectionedCsv(csv: string, sectionNames: string[]): Record<string, 
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as { instanceId: string; extractionType: string; itemId: string };
-    const { instanceId, extractionType, itemId } = body;
+    const body = await req.json() as { instanceId: string; extractionType: string; itemId: string; source?: string };
+    const { instanceId, extractionType, itemId, source } = body;
 
     if (!instanceId || !extractionType || !itemId) {
       return NextResponse.json({ error: "Missing instanceId, extractionType, or itemId" }, { status: 400 });
@@ -119,6 +129,47 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Failed to decrypt session cookie" }, { status: 500 });
     }
 
+    // ── AdFlo code path ───────────────────────────────────────────────────────
+    const entitySingular = ADFLO_ENTITY_SINGULAR[extractionType];
+    if (source === 'adflo' && entitySingular) {
+      const adfloUrl = `${baseUrl}/server/api/entityforms/${entitySingular}/${encodeURIComponent(itemId)}?all=true&extra=true&sql=2`;
+      let adfloRes: Response;
+      try {
+        adfloRes = await fetch(adfloUrl, {
+          method: "GET",
+          headers: { ...REQUEST_HEADERS, Accept: "application/json", Cookie: cookie },
+        });
+      } catch (err) {
+        return NextResponse.json({ error: `Network error: ${String(err).slice(0, 200)}` }, { status: 502 });
+      }
+      if (!adfloRes.ok) {
+        return NextResponse.json({ error: `AdFlo returned HTTP ${adfloRes.status}` }, { status: 502 });
+      }
+      let parsed: unknown;
+      try {
+        parsed = await adfloRes.json();
+      } catch {
+        return NextResponse.json({ error: "AdFlo returned non-JSON response" }, { status: 502 });
+      }
+      if (parsed && typeof parsed === "object" && (parsed as Record<string, unknown>).state === "login") {
+        return NextResponse.json({ error: "Session expired. Refresh the cookie on the Instances page." }, { status: 401 });
+      }
+      const obj = parsed as Record<string, unknown>;
+      const data = (obj.data && typeof obj.data === "object" && !Array.isArray(obj.data))
+        ? (obj.data as Record<string, unknown>)
+        : obj;
+      const steps = Array.isArray(data.steps) ? data.steps as Record<string, unknown>[] : [];
+      const fields: unknown[] = [];
+      for (const step of steps) {
+        const groups = Array.isArray(step.groups) ? step.groups as Record<string, unknown>[] : [];
+        for (const group of groups) {
+          if (Array.isArray(group.fields)) fields.push(...(group.fields as unknown[]));
+        }
+      }
+      return NextResponse.json({ sections: { fields }, itemId, extractionType });
+    }
+
+    // ── Classic code path ─────────────────────────────────────────────────────
     const url = `${baseUrl}${detailPath}?id=${encodeURIComponent(itemId)}`;
     let csv: string;
 
@@ -151,7 +202,18 @@ export async function POST(req: NextRequest) {
       // If no separator and not a login redirect, still try to parse — may be a single-section response
     }
 
-    const sectionNames = extractionType === "line_item_forms" ? SECTION_NAMES_PRODUCTS : SECTION_NAMES_FORMS;
+    const SEP_Q = '"----- SECTION ----- SEPARATOR -----"';
+    const SEP_U = "----- SECTION ----- SEPARATOR -----";
+    let rawSections = csv.split(SEP_Q);
+    if (rawSections.length === 1) rawSections = csv.split(SEP_U);
+    rawSections = rawSections.map(s => s.trim()).filter(Boolean);
+
+    const firstSectionHeader = rawSections[0]?.split("\n").map(l => l.trim()).find(l => l.length > 0) ?? "";
+    const isAdfloResponse = ADFLO_FORM_TYPES.has(extractionType) && firstSectionHeader.includes("content_type_id");
+    const sectionNames = isAdfloResponse ? SECTION_NAMES_ADFLO_FORMS
+      : extractionType === "line_item_forms" ? SECTION_NAMES_PRODUCTS
+      : SECTION_NAMES_FORMS;
+
     const sections = parseSectionedCsv(csv, sectionNames);
 
     return NextResponse.json({ sections, itemId, extractionType });

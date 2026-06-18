@@ -2,6 +2,40 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 import { decryptText } from "../../../../lib/crypto";
 
+async function fetchCsrfToken(
+  base: string,
+  headers: Record<string, string>
+): Promise<string | null> {
+  try {
+    const response = await fetch(`${base}/app/iotool`, { method: "GET", headers });
+    const html = await response.text();
+
+    const metaCsrf =
+      html.match(/<meta[^>]+name=["']csrf-token["'][^>]+content=["']([^"']+)["']/i) ??
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']csrf-token["']/i);
+    if (metaCsrf) return metaCsrf[1];
+
+    const metaXCsrf =
+      html.match(/<meta[^>]+name=["']X-CSRF-TOKEN["'][^>]+content=["']([^"']+)["']/i) ??
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']X-CSRF-TOKEN["']/i);
+    if (metaXCsrf) return metaXCsrf[1];
+
+    const inputCsrf =
+      html.match(/<input[^>]+name=["']csrf_token["'][^>]+value=["']([^"']+)["']/i) ??
+      html.match(/<input[^>]+value=["']([^"']+)["'][^>]+name=["']csrf_token["']/i);
+    if (inputCsrf) return inputCsrf[1];
+
+    const inputToken =
+      html.match(/<input[^>]+name=["']_token["'][^>]+value=["']([^"']+)["']/i) ??
+      html.match(/<input[^>]+value=["']([^"']+)["'][^>]+name=["']_token["']/i);
+    if (inputToken) return inputToken[1];
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 const COMMON_HEADERS = {
   Accept: "application/json",
   "X-Requested-With": "XMLHttpRequest",
@@ -78,6 +112,8 @@ export async function POST(req: NextRequest) {
     const getRes = await fetch(getUrl, { headers: getHeaders });
     if (!getRes.ok) {
       const text = await getRes.text();
+      console.log("[assign-parent] GET response status:", getRes.status);
+      console.log("[assign-parent] GET response snippet:", text.slice(0, 300));
       console.error(`[assign-parent] GET failed HTTP ${getRes.status}:`, text.slice(0, 300));
       return NextResponse.json({ error: `Failed to fetch task form: HTTP ${getRes.status}`, snippet: text.slice(0, 300) }, { status: 502 });
     }
@@ -126,7 +162,18 @@ export async function POST(req: NextRequest) {
     Cookie: cookie,
     Accept: "application/json, text/plain, */*",
     "Content-Type": "application/x-www-form-urlencoded",
+    Origin: base,
+    Referer: `${base}/app/admin/entityforms/task/${encodeURIComponent(taskFormId)}`,
+    "X-Requested-With": "XMLHttpRequest",
   };
+
+  const csrfToken = await fetchCsrfToken(base, { ...COMMON_HEADERS, Cookie: cookie });
+  console.log("[assign-parent] CSRF token result:", csrfToken ?? "null — no token found");
+  if (csrfToken) {
+    postHeaders["X-CSRF-Token"] = csrfToken;
+    postHeaders["X-XSRF-TOKEN"] = csrfToken;
+  }
+
   const formBody = new URLSearchParams({ model: JSON.stringify(updatedModel) });
 
   console.log(`[assign-parent] POST ${postUrl} — form-encoded, parent_form_id=${newParentFormId}`);
@@ -140,11 +187,13 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: postHeaders,
       body: formBody.toString(),
+      redirect: "follow",
     });
     saveHttpCode = postRes.status;
     const postText = await postRes.text();
     saveSnippet = postText.slice(0, 500);
     console.log(`[assign-parent] POST → HTTP ${saveHttpCode}:`, saveSnippet.slice(0, 300));
+    console.log("[assign-parent] POST response snippet:", saveSnippet);
 
     if (!postRes.ok) {
       await persistResult(instanceId, taskFormId, taskFormName, "error", saveHttpCode, saveSnippet, ranAt);
@@ -195,7 +244,7 @@ export async function POST(req: NextRequest) {
     console.warn("[assign-parent] Verification GET failed (non-fatal)");
   }
 
-  const success = verifiedParentId === String(newParentFormId) || saveHttpCode < 300;
+  const success = verifiedParentId === String(newParentFormId);
   const status  = success ? "success" : "error";
   const snippet = success
     ? `Parent set to "${newParentFormName ?? newParentFormId}" (verified: "${verifiedParentName ?? verifiedParentId}")`

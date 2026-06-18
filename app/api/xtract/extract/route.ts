@@ -179,13 +179,48 @@ async function fetchFormsByAllClusters(
   const seen = new Set<string>();
   const merged: ParsedItem[] = [];
 
-  for (const clusterId of clusterIds) {
-    const url = `${baseUrl}/app/iotool/form/formsByClusterId?clusterId=${encodeURIComponent(clusterId)}&showAll=false&entityType=${encodeURIComponent(entityType)}`;
-    const { parsed, error } = await fetchJson(url, cookie);
-    if (error || !parsed) continue;
-    if (isLoginRedirect(parsed)) return { items: [], sessionExpired: true };
+  let loggedFirstRaw = false;
 
-    const items = parseOldUiItems(entityType, parsed);
+  for (const clusterId of clusterIds) {
+    // Flight forms: try dedicated endpoint first, fall back to entityType param variant
+    let url: string;
+    let items: ParsedItem[] = [];
+
+    if (entityType === "flight") {
+      const primaryUrl = `${baseUrl}/app/iotool/form/flightFormsByClusterId?clusterId=${encodeURIComponent(clusterId)}&showAll=false`;
+      console.log(`[xtract/extract] → GET ${primaryUrl}`);
+      const primary = await fetchJson(primaryUrl, cookie);
+      if (primary.parsed && isLoginRedirect(primary.parsed)) return { items: [], sessionExpired: true };
+
+      if (!primary.error && primary.parsed) {
+        items = parseOldUiItems(entityType, primary.parsed);
+        console.log(`[xtract/extract]   cluster ${clusterId} (flightFormsByClusterId) → ${items.length} raw records`);
+      }
+
+      if (items.length === 0) {
+        url = `${baseUrl}/app/iotool/form/formsByClusterId?clusterId=${encodeURIComponent(clusterId)}&showAll=false&entityType=flight_form`;
+        console.log(`[xtract/extract]   0 results, trying fallback → GET ${url}`);
+        const fallback = await fetchJson(url, cookie);
+        if (fallback.parsed && isLoginRedirect(fallback.parsed)) return { items: [], sessionExpired: true };
+        if (!fallback.error && fallback.parsed) {
+          items = parseOldUiItems(entityType, fallback.parsed);
+          console.log(`[xtract/extract]   cluster ${clusterId} (entityType=flight_form) → ${items.length} raw records`);
+        }
+      }
+
+      if (!loggedFirstRaw && items.length > 0) {
+        console.log(`[xtract/extract] flight first raw record:`, JSON.stringify(items[0].raw, null, 2));
+        loggedFirstRaw = true;
+      }
+    } else {
+      url = `${baseUrl}/app/iotool/form/formsByClusterId?clusterId=${encodeURIComponent(clusterId)}&showAll=false&entityType=${encodeURIComponent(entityType)}`;
+      console.log(`[xtract/extract] → GET ${url}`);
+      const { parsed, error } = await fetchJson(url, cookie);
+      if (error || !parsed) { console.log(`[xtract/extract]   cluster ${clusterId} error: ${error}`); continue; }
+      if (isLoginRedirect(parsed)) return { items: [], sessionExpired: true };
+      items = parseOldUiItems(entityType, parsed);
+    }
+
     let newCount = 0;
     for (const item of items) {
       if (item.id && !seen.has(item.id)) {
@@ -194,17 +229,15 @@ async function fetchFormsByAllClusters(
         newCount++;
       }
     }
-    console.log(`[xtract/extract] cluster ${clusterId} → ${items.length} records (${newCount} new after dedup)`);
+    console.log(`[xtract/extract]   cluster ${clusterId} → ${newCount} new after dedup (${merged.length} total so far)`);
   }
 
   // ── Post-merge content_type_id filter ─────────────────────────────────────
-  // clusterId=0 leaks mixed types; specific cluster calls can still include
-  // forms from other entity types. Filter to the expected content_type_id.
+  // flight is excluded — its dedicated endpoint already scopes correctly.
   const CONTENT_TYPE_FILTER: Record<string, string> = {
     task:   "1",
     order:  "2",
     client: "3",
-    flight: "4",  // best guess — logged below if wrong
   };
 
   if (entityType in CONTENT_TYPE_FILTER) {
@@ -216,7 +249,7 @@ async function fetchFormsByAllClusters(
       return String(ct) === expected;
     });
 
-    console.log(`[xtract/extract] content_type_id filter (${entityType}, expected=${expected ?? "none"}): ${beforeCount} → ${filtered.length}`);
+    console.log(`[xtract/extract] content_type_id filter (${entityType}, expected=${expected}): ${beforeCount} → ${filtered.length}`);
     return { items: filtered, sessionExpired: false };
   }
 
@@ -361,7 +394,7 @@ export async function POST(req: NextRequest) {
       } else {
         // Client/order/task/flight forms: fetch across every cluster and merge
         const { ids: clusterIds } = await fetchClusters(baseUrl, cookie);
-        console.log(`[xtract/extract] Fetching ${extractionType} (entityType=${entityType}) across ${clusterIds.length} cluster(s)`);
+        console.log(`[xtract/extract] Fetching ${extractionType} (entityType=${entityType}) across ${clusterIds.length} cluster(s): [${clusterIds.join(", ")}]`);
 
         const { items: merged, sessionExpired } = await fetchFormsByAllClusters(baseUrl, cookie, entityType, clusterIds);
         if (sessionExpired) {

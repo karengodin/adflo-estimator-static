@@ -457,6 +457,7 @@ function EntitySection({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [migrating, setMigrating] = useState(false);
   const [results, setResults] = useState<MigrateResult[]>([]);
+  const [filterQuery, setFilterQuery] = useState("");
 
   // Classic fetch state
   const [classicItems, setClassicItems] = useState<ClassicItem[]>([]);
@@ -465,11 +466,15 @@ function EntitySection({
 
   const pasteResolved = mode === "paste" && pasteInput.trim() ? resolveInput(pasteInput, items) : null;
 
+  const displayedItems = entityType === "task" && filterQuery.trim()
+    ? classicItems.filter((i) => i.name.toLowerCase().includes(filterQuery.toLowerCase()))
+    : classicItems;
+
   const toggleItem = (id: string) =>
     setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
   const selectAllPending = () =>
-    setSelected(new Set(classicItems.filter((i) => latestRun[i.id]?.status !== "success").map((i) => i.id)));
+    setSelected(new Set(displayedItems.map((i) => i.id)));
 
   const fetchFromClassic = async () => {
     setFetching(true);
@@ -603,7 +608,19 @@ function EntitySection({
           {classicItems.length > 0 && (
             <>
               <div style={{ padding: "7px 20px", background: "#f8fafc", borderBottom: "1px solid #eef3f8", display: "flex", alignItems: "center", gap: 8 }}>
-                <button onClick={selectAllPending} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Select all pending</button>
+                {entityType === "task" && (
+                  <input
+                    type="text"
+                    value={filterQuery}
+                    onChange={(e) => setFilterQuery(e.target.value)}
+                    placeholder="Search task forms…"
+                    style={{
+                      padding: "3px 8px", borderRadius: 6, border: "1px solid #dde5ef",
+                      fontSize: 12, fontFamily: "inherit", outline: "none", color: "#0f1623", width: 180,
+                    }}
+                  />
+                )}
+                <button onClick={selectAllPending} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Select all</button>
                 <button onClick={() => setSelected(new Set())} style={{ ...ghostBtnStyle, fontSize: 11, padding: "3px 10px" }}>Clear</button>
                 <button
                   onClick={() => { setClassicItems([]); setSelected(new Set()); setFetchError(null); }}
@@ -617,7 +634,11 @@ function EntitySection({
                 </span>
               </div>
               <div style={{ maxHeight: 300, overflowY: "auto" }}>
-                {classicItems.map((item, i) => {
+                {displayedItems.length === 0 && filterQuery.trim() ? (
+                  <div style={{ padding: "16px 20px", fontSize: 13, color: "#94a3b8" }}>
+                    No task forms match &ldquo;{filterQuery}&rdquo;.
+                  </div>
+                ) : displayedItems.map((item, i) => {
                   const run = latestRun[item.id];
                   const isChecked = selected.has(item.id);
                   const statusInfo = run ? humanStatus(run.status, run.snippet) : null;
@@ -627,7 +648,7 @@ function EntitySection({
                       onClick={() => toggleItem(item.id)}
                       style={{
                         display: "flex", alignItems: "center", gap: 10, padding: "8px 20px",
-                        borderBottom: i < classicItems.length - 1 ? "1px solid #f1f5f9" : "none",
+                        borderBottom: i < displayedItems.length - 1 ? "1px solid #f1f5f9" : "none",
                         background: isChecked ? "rgba(47,111,237,0.03)" : "transparent",
                         cursor: "pointer",
                       }}

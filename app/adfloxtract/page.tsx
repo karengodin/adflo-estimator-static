@@ -44,6 +44,8 @@ const EXTRACTION_TYPES = [
   { key: 'flight_forms',    label: 'Flight Forms' },
 ]
 
+const ADFLO_EXTRACTION_TYPES = EXTRACTION_TYPES.filter(t => t.key !== 'task_forms')
+
 const TYPE_LABEL: Record<string, string> = Object.fromEntries(EXTRACTION_TYPES.map(t => [t.key, t.label]))
 
 // Types that support full detail export via form-details route
@@ -110,6 +112,7 @@ export default function AdfloXtractPage() {
   const [instancesError, setInstancesError] = useState<string | null>(null)
 
   const [selectedInstance, setSelectedInstance] = useState<Instance | null>(null)
+  const [source, setSource] = useState<'classic' | 'adflo'>('classic')
   const [extractionType, setExtractionType] = useState('lookups')
 
   const [extracting, setExtracting] = useState(false)
@@ -237,7 +240,8 @@ export default function AdfloXtractPage() {
     setExtractError(null)
     try {
       const { data: { session: authSession } } = await supabase.auth.getSession()
-      const res = await fetch('/api/xtract/extract', {
+      const endpoint = source === 'adflo' ? '/api/xtract/adflo-extract' : '/api/xtract/extract'
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -317,6 +321,7 @@ export default function AdfloXtractPage() {
             instanceId: selectedInstance.id,
             extractionType: runResult.entity_type,
             itemId: item.id,
+            source,
           }),
         })
         const data = await res.json() as { sections?: Record<string, unknown[]>; error?: string }
@@ -475,9 +480,32 @@ export default function AdfloXtractPage() {
                   <div style={{ fontSize: 12, color: '#94a3b8' }}>{selectedInstance.base_url}</div>
                 </div>
 
+                {/* Source toggle */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  {(['classic', 'adflo'] as const).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        setSource(s)
+                        if (s === 'adflo' && extractionType === 'task_forms') setExtractionType('lookups')
+                      }}
+                      style={{
+                        padding: '6px 13px', borderRadius: 7,
+                        border: source === s ? '1.5px solid #2f6fed' : '1.5px solid #dde5ef',
+                        background: source === s ? '#2f6fed' : '#fff',
+                        color: source === s ? '#fff' : '#627286',
+                        fontSize: 13, fontWeight: source === s ? 600 : 400,
+                        cursor: 'pointer', transition: 'all 0.1s', fontFamily: 'DM Sans, sans-serif',
+                      }}
+                    >
+                      {s === 'classic' ? 'Classic' : 'AdFlo'}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Extraction type pills */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 14 }}>
-                  {EXTRACTION_TYPES.map(t => (
+                  {(source === 'adflo' ? ADFLO_EXTRACTION_TYPES : EXTRACTION_TYPES).map(t => (
                     <button
                       key={t.key}
                       onClick={() => setExtractionType(t.key)}
